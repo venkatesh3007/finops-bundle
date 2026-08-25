@@ -47,6 +47,7 @@ export default function GameClient({ entity = "personal" }) {
   const [ventures, setVentures] = useState([]);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
+  const [view, setView] = useState("board"); // board (score) | sort (the work)
 
   const load = useCallback(async () => {
     const r = await fetch(`/api/game?entity=${entity}&from=${range.from}&to=${range.to}`);
@@ -108,9 +109,19 @@ export default function GameClient({ entity = "personal" }) {
         )}
       </div>
 
-      <Hero st={st} range={range} />
-
-      <Detail st={st} mv={mv} ventures={ventures} busy={busy} resolve={resolve} saveVenture={saveVenture} />
+      {view === "sort" ? (
+        <SortMode entity={entity} onBack={() => { setView("board"); load(); }} />
+      ) : (
+        <>
+          <button className={s.sortCTA} onClick={() => setView("sort")}>
+            <span className={s.sortCTAn}>{mv.review.length}+</span>
+            <span className={s.sortCTAt}><b>Sort your transactions</b><small>read each statement line, put it where it belongs — the board goes true as you go</small></span>
+            <span className={s.sortCTAgo}>Play →</span>
+          </button>
+          <Hero st={st} range={range} />
+          <Detail st={st} mv={mv} ventures={ventures} busy={busy} resolve={resolve} saveVenture={saveVenture} />
+        </>
+      )}
 
       {toast && <div className={s.toast}>{toast}</div>}
     </div>
@@ -333,6 +344,87 @@ function ReviewRow({ r, cats, busy, resolve }) {
       <span className={s.rWhat}>{r.payee || "(no payee)"} <em>{r.reason}{r.suggestion ? " · learned" : ""}</em></span>
       <select value={to} onChange={(e) => setTo(e.target.value)}>{opts.map((c) => <option key={c} value={c}>{c.split(":").slice(1).join(" · ")}</option>)}</select>
       <button className={s.ok} disabled={busy} onClick={() => resolve({ action: "reclassify", txnId: r.id, fromAccount: r.account, toAccount: to, makeRule: true })}>{inr(r.amount)} ✓</button>
+    </div>
+  );
+}
+
+/* ===================== THE SORT — the core loop ===================== */
+const EXP_CATS = [["Dining", "Expenses:Dining"], ["Groceries", "Expenses:Groceries"], ["Cabs", "Expenses:Travel:Cabs"],
+  ["Flights", "Expenses:Travel:Flights"], ["Hotels", "Expenses:Travel:Hotels"], ["Shopping", "Expenses:Shopping"],
+  ["Health", "Expenses:Health"], ["Subscriptions", "Expenses:Subscriptions"], ["Sports", "Expenses:Sports"],
+  ["Utilities", "Expenses:Utilities"], ["Gifts", "Expenses:Gifts"], ["Family", "Expenses:Family"]];
+const WORK = [["aikaara", "Assets:Receivable:Aikaara"], ["Flyy", "Assets:Receivable:Flyy"], ["Arthsutra", "Assets:Receivable:Arthsutra"]];
+const catLabel = (a) => a.split(":").slice(1).join(" · ");
+
+function SortMode({ entity, onBack }) {
+  const [q, setQ] = useState(null);
+  const [i, setI] = useState(0);
+  const [done, setDone] = useState(0);
+  const [streak, setStreak] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [custom, setCustom] = useState("");
+
+  const load = useCallback(async () => {
+    const j = await (await fetch(`/api/txns?entity=${entity}&queue=1&limit=40`)).json();
+    setQ(j); setI(0);
+  }, [entity]);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (q && i >= q.txns.length && (q.pile || 0) > 0) load(); }, [i, q, load]);
+
+  const card = q?.txns[i];
+  const post = async (body, keepStreak) => {
+    if (!card || busy) return; setBusy(true);
+    try {
+      const r = await (await fetch("/api/game/move", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ entity, ...body }) })).json();
+      if (!r.error) { setDone((d) => d + 1); setStreak((k) => keepStreak ? k + 1 : 0); setI((x) => x + 1); }
+    } finally { setBusy(false); }
+  };
+  const sort = (toAccount) => post({ action: "reclassify", txnId: card.id, fromAccount: card.account, toAccount, makeRule: true }, true);
+  const review = () => post({ action: "review", txnId: card.id }, false);
+  const setCustomCat = () => { if (!custom.trim()) return; const a = custom.includes(":") ? custom : `Expenses:${custom.replace(/^\w/, (c) => c.toUpperCase())}`; sort(a); setCustom(""); };
+
+  const left = Math.max(0, (q?.pile || 0) - i);
+  const pct = q?.pile ? Math.min(100, Math.round((done / (done + left || 1)) * 100)) : 0;
+
+  return (
+    <div className={s.sort}>
+      <div className={s.sortTop}>
+        <button className={s.back} onClick={onBack}>‹ board</button>
+        <div className={s.sortProg}><b>{done}</b> sorted {streak > 2 && <span className={s.streak}>🔥 {streak}</span>}<span className={s.left}>~{left} left in the pile</span></div>
+      </div>
+      <div className={s.progbar}><div style={{ width: pct + "%" }} /></div>
+
+      {!q ? <div className={s.sortDone}>Loading the pile…</div>
+        : !card ? <div className={s.sortDone}>{left === 0 ? "🎉 Pile cleared — every rupee is where it belongs." : "Loading next…"}</div>
+        : (
+          <div className={s.sortCard} key={card.id}>
+            <div className={s.scHead}>
+              <span className={s.scDate}>{card.date}</span>
+              <span className={s.scStmt}>{card.statement || "manual / other"}</span>
+              {card.doc && <span className={s.scDoc}>📄 {card.doc.length > 22 ? card.doc.slice(0, 22) + "…" : card.doc}</span>}
+              <span className={`${s.scAmt} ${card.amount < 0 ? s.pos : ""}`}>{inr(card.amount)}</span>
+            </div>
+            <div className={s.scLine}>{card.narration || card.payee || "(no description on the statement)"}</div>
+            <div className={s.scNow}>sitting in <b>Other</b> — where did this money go?</div>
+
+            {card.suggestion && <button className={s.suggest} disabled={busy} onClick={() => sort(card.suggestion)}>↩ Suggested: <b>{catLabel(card.suggestion)}</b> · learned · one tap</button>}
+
+            <div className={s.catGrid}>
+              {EXP_CATS.map(([l, a]) => <button key={a} className={s.cat} disabled={busy} onClick={() => sort(a)}>{l}</button>)}
+            </div>
+            <div className={s.workRow}>
+              <span className={s.workLbl}>Work · reimbursable</span>
+              {WORK.map(([l, a]) => <button key={a} className={s.work} disabled={busy} onClick={() => sort(a)}>{l}</button>)}
+            </div>
+            <div className={s.customRow}>
+              <input placeholder="or type a category — e.g. Insurance, Rent…" value={custom} onChange={(e) => setCustom(e.target.value)} onKeyDown={(e) => e.key === "Enter" && setCustomCat()} />
+              <button className={s.ok} disabled={busy || !custom.trim()} onClick={setCustomCat}>Set</button>
+              <button className={s.reviewBtn} disabled={busy} onClick={review}>⏳ Review later</button>
+            </div>
+          </div>
+        )}
+
+      {q && (q.pile || 0) === 0 && done === 0 && <div className={s.sortDone}>Nothing in the pile — it's all sorted. 🎉</div>}
     </div>
   );
 }

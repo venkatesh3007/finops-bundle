@@ -1,4 +1,4 @@
-import { resolveReclassify, addManualEntry, claimReimbursement } from "../../../../lib/moves";
+import { resolveReclassify, addManualEntry, claimReimbursement, markReview } from "../../../../lib/moves";
 export const maxDuration = 60;
 export async function POST(req) {
   try {
@@ -7,6 +7,7 @@ export async function POST(req) {
     if (action === "reclassify") result = await resolveReclassify(entity, b);
     else if (action === "add") result = await addManualEntry(entity, b);
     else if (action === "claim") result = await claimReimbursement(entity, b);
+    else if (action === "review") result = await markReview(entity, b);
     else return Response.json({ error: `unknown action: ${action}` }, { status: 400 });
     return Response.json({ ok: true, action, result });
   } catch (e) { return Response.json({ error: String(e?.message || e) }, { status: 400 }); }

@@ -23,6 +23,7 @@ async function ensureSchema() {
   // ventures shipped after the first migration; its DDL is create-if-not-exists,
   // so run it every ensure to bring an already-migrated DB up to date.
   await pool().query(VENTURES_SQL);
+  await pool().query("alter table vettings drop constraint if exists vettings_status_check; alter table vettings add constraint vettings_status_check check (status in ('unvetted','ok','wrong','review'));").catch(()=>{});
   return res;
 }
 
