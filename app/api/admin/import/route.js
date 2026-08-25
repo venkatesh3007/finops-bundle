@@ -1,5 +1,5 @@
 import { pool, query } from "../../../../lib/db";
-import { SCHEMA_SQL, SEED_COMMITMENTS_SQL } from "../../../../lib/schema";
+import { SCHEMA_SQL, VENTURES_SQL, SEED_COMMITMENTS_SQL } from "../../../../lib/schema";
 
 export const maxDuration = 60;
 
@@ -9,15 +9,21 @@ const TYPE = (name) => ({ Assets: "assets", Liabilities: "liabilities", Equity: 
 // fall back to built-ins (gen_random_uuid is native on PG13+, citext→text).
 async function ensureSchema() {
   const r = await query("select to_regclass('public.transactions') as t");
-  if (r[0].t) return "exists";
-  try {
-    await pool().query(SCHEMA_SQL);
-    return "created";
-  } catch (e) {
-    const sql = SCHEMA_SQL.replace(/create extension[^;]*;/gi, "").replace(/\bcitext\b/g, "text");
-    await pool().query(sql);
-    return "created-noext";
+  let res = "exists";
+  if (!r[0].t) {
+    try {
+      await pool().query(SCHEMA_SQL);
+      res = "created";
+    } catch (e) {
+      const sql = SCHEMA_SQL.replace(/create extension[^;]*;/gi, "").replace(/\bcitext\b/g, "text");
+      await pool().query(sql);
+      res = "created-noext";
+    }
   }
+  // ventures shipped after the first migration; its DDL is create-if-not-exists,
+  // so run it every ensure to bring an already-migrated DB up to date.
+  await pool().query(VENTURES_SQL);
+  return res;
 }
 
 // Admin-only bulk import — the one-door data path: your migrated ledger is POSTed

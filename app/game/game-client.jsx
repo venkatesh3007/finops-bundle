@@ -2,276 +2,337 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import s from "./game.module.css";
 
+/* ---------- helpers ---------- */
 const inr = (n) => (n < 0 ? "−₹" : "₹") + Math.round(Math.abs(n)).toLocaleString("en-IN");
 const compact = (n) => {
-  const a = Math.abs(n), sign = n < 0 ? "−" : "";
-  if (a >= 1e7) return `${sign}₹${(a / 1e7).toFixed(2)}Cr`;
-  if (a >= 1e5) return `${sign}₹${(a / 1e5).toFixed(2)}L`;
-  if (a >= 1e3) return `${sign}₹${(a / 1e3).toFixed(0)}k`;
-  return `${sign}₹${a}`;
+  const a = Math.abs(n), sg = n < 0 ? "−" : "";
+  if (a >= 1e7) return `${sg}₹${(a / 1e7).toFixed(2)}Cr`;
+  if (a >= 1e5) return `${sg}₹${(a / 1e5).toFixed(2)}L`;
+  if (a >= 1e3) return `${sg}₹${Math.round(a / 1e3)}k`;
+  return `${sg}₹${Math.round(a)}`;
 };
-const monthName = (m) => new Date(m + "-01T00:00:00").toLocaleString("en", { month: "long", year: "numeric" });
+const lastDay = (y, m) => new Date(y, m, 0).getDate();
+const pad = (n) => String(n).padStart(2, "0");
 
-// The playable window: Apr 2025 → current month.
-function monthList() {
-  const out = [];
-  const now = new Date();
-  const end = now.getFullYear() * 12 + now.getMonth();
-  for (let y = 2025, mo = 3; y * 12 + mo <= end; mo++) {
-    if (mo > 11) { mo = 0; y++; }
-    out.push(`${y}-${String(mo + 1).padStart(2, "0")}`);
-  }
-  return out;
+// period kind + anchor → {from, to, label}
+function rangeOf(kind, a) {
+  if (kind === "month") { const [y, m] = a.split("-").map(Number); return { from: `${y}-${pad(m)}-01`, to: `${y}-${pad(m)}-${lastDay(y, m)}`, label: new Date(y, m - 1).toLocaleString("en", { month: "long", year: "numeric" }) }; }
+  if (kind === "quarter") { const [y, q] = a.split("Q").map(Number); const sm = (q - 1) * 3 + 1; return { from: `${y}-${pad(sm)}-01`, to: `${y}-${pad(sm + 2)}-${lastDay(y, sm + 2)}`, label: `Q${q} ${y} · ${new Date(y, sm - 1).toLocaleString("en", { month: "short" })}–${new Date(y, sm + 1).toLocaleString("en", { month: "short" })}` }; }
+  if (kind === "year") { const y = Number(a); return { from: `${y}-04-01`, to: `${y + 1}-03-31`, label: `FY ${String(y).slice(2)}–${String(y + 1).slice(2)}` }; }
+  return { from: a.from, to: a.to, label: "Custom" };
 }
+function stepAnchor(kind, a, d) {
+  if (kind === "month") { let [y, m] = a.split("-").map(Number); m += d; if (m > 12) { m = 1; y++; } if (m < 1) { m = 12; y--; } return `${y}-${pad(m)}`; }
+  if (kind === "quarter") { let [y, q] = a.split("Q").map(Number); q += d; if (q > 4) { q = 1; y++; } if (q < 1) { q = 4; y--; } return `${y}Q${q}`; }
+  if (kind === "year") return String(Number(a) + d);
+  return a;
+}
+const defaultAnchor = { month: "2026-08", quarter: "2026Q3", year: "2025", custom: { from: "2025-04-01", to: "2026-08-31" } };
 
+const THEMES = [
+  { id: "climb", name: "Climb", ac: "#f2c14e" },
+  { id: "board", name: "Board", ac: "#c98a3c" },
+  { id: "machine", name: "Machine", ac: "#35d0c4" },
+  { id: "season", name: "Season", ac: "#ff5d6c" },
+  { id: "quest", name: "Quest", ac: "#a988ff" },
+];
+
+/* ---------- root ---------- */
 export default function GameClient({ entity = "personal" }) {
-  const months = useMemo(monthList, []);
-  const [mode, setMode] = useState("game");
-  const [month, setMonth] = useState(months[months.length - 1]);
+  const [theme, setTheme] = useState("climb");
+  const [kind, setKind] = useState("month");
+  const [anchor, setAnchor] = useState(defaultAnchor);
+  const range = useMemo(() => rangeOf(kind, kind === "custom" ? anchor.custom : anchor[kind]), [kind, anchor]);
   const [data, setData] = useState(null);
+  const [ventures, setVentures] = useState([]);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
-  const idx = months.indexOf(month);
 
   const load = useCallback(async () => {
-    const r = await fetch(`/api/game?entity=${entity}&month=${month}`);
+    const r = await fetch(`/api/game?entity=${entity}&from=${range.from}&to=${range.to}`);
     const j = await r.json();
     if (j.error) { setToast(j.error); return; }
     setData(j);
-  }, [entity, month]);
+    const v = await (await fetch(`/api/ventures?entity=${entity}`)).json();
+    setVentures(v.ventures || []);
+  }, [entity, range.from, range.to]);
   useEffect(() => { setData(null); load(); }, [load]);
 
-  const resolve = useCallback(async (body) => {
+  const act = useCallback(async (url, body) => {
     setBusy(true);
     try {
-      const r = await fetch("/api/game/move", {
-        method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ entity, ...body }),
-      });
-      const j = await r.json();
-      setToast(j.error ? `⚠ ${j.error}` : "✓ sorted");
+      const j = await (await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ entity, ...body }) })).json();
+      setToast(j.error ? `⚠ ${j.error}` : "✓ done");
       if (!j.error) await load();
     } finally { setBusy(false); setTimeout(() => setToast(""), 2600); }
   }, [entity, load]);
+  const resolve = (b) => act("/api/game/move", b);
+  const saveVenture = (b) => act("/api/ventures", b);
 
-  if (!data) return <div className={s.wrap}>Loading your board…</div>;
-  const p = data.position, m = data.moves;
+  const step = (d) => setAnchor((a) => ({ ...a, [kind]: stepAnchor(kind, a[kind], d) }));
+
+  if (!data) return <div className={s.loading}>Loading your board…</div>;
+  const st = data.state, mv = data.moves;
+  const Hero = { climb: Climb, board: Board, machine: Machine, season: Season, quest: Quest }[theme];
+  const ac = THEMES.find((t) => t.id === theme).ac;
 
   return (
-    <div className={s.wrap}>
+    <div className={s.app} data-theme={theme} style={{ "--ac": ac }}>
       <div className={s.top}>
-        <h1>The <span className="g">Board</span> · {entity[0].toUpperCase() + entity.slice(1)}</h1>
+        <div className={s.brand}>finops<span style={{ color: ac }}>·</span>play</div>
+        <div className={s.themes}>
+          {THEMES.map((t) => (
+            <button key={t.id} className={theme === t.id ? s.themeOn : s.themeBtn} onClick={() => setTheme(t.id)} style={theme === t.id ? { "--ac": t.ac } : {}}>{t.name}</button>
+          ))}
+        </div>
+      </div>
+
+      <div className={s.periods}>
         <div className={s.seg}>
-          <button className={mode === "game" ? s.on : ""} onClick={() => setMode("game")}>Game</button>
-          <button className={mode === "dashboard" ? s.on : ""} onClick={() => setMode("dashboard")}>Dashboard</button>
+          {["year", "quarter", "month", "custom"].map((k) => (
+            <button key={k} className={kind === k ? s.segOn : ""} onClick={() => setKind(k)}>{k[0].toUpperCase() + k.slice(1)}</button>
+          ))}
         </div>
+        {kind !== "custom" ? (
+          <div className={s.stepper}>
+            <button onClick={() => step(-1)} aria-label="prev">‹</button>
+            <span>{range.label}</span>
+            <button onClick={() => step(1)} aria-label="next">›</button>
+          </div>
+        ) : (
+          <div className={s.custom}>
+            <input type="date" value={anchor.custom.from} onChange={(e) => setAnchor((a) => ({ ...a, custom: { ...a.custom, from: e.target.value } }))} />
+            <span>→</span>
+            <input type="date" value={anchor.custom.to} onChange={(e) => setAnchor((a) => ({ ...a, custom: { ...a.custom, to: e.target.value } }))} />
+          </div>
+        )}
       </div>
 
-      <div className={s.scrub}>
-        <div className={s.scrubTop}>
-          <button className={s.step} onClick={() => setMonth(months[Math.max(0, idx - 1)])} disabled={idx === 0} aria-label="Previous month">‹</button>
-          <span className={s.cur}>{monthName(month)}</span>
-          <button className={s.step} onClick={() => setMonth(months[Math.min(months.length - 1, idx + 1)])} disabled={idx === months.length - 1} aria-label="Next month">›</button>
-          <span className={s.range}>{monthName(months[0])} — {monthName(months[months.length - 1])} · {months.length} months</span>
-        </div>
-      </div>
+      <Hero st={st} range={range} />
 
-      {mode === "game" ? <GameView p={p} m={m} busy={busy} resolve={resolve} /> : <DashboardView p={p} m={m} busy={busy} resolve={resolve} />}
+      <Detail st={st} mv={mv} ventures={ventures} busy={busy} resolve={resolve} saveVenture={saveVenture} />
 
       {toast && <div className={s.toast}>{toast}</div>}
     </div>
   );
 }
 
-function Reimbursements({ p, busy, resolve }) {
+/* ---------- the two meters (shared data, themes wrap them) ---------- */
+function meterData(st) {
+  const f = st.meters.freedom, l = st.meters.leverage;
+  return {
+    freedomPct: f.pct, passive: f.passiveMonthly, life: f.expenseMonthly,
+    deployed: l.deployed, cost: l.costMonthly, produces: l.producingMonthly,
+    building: l.building, coversCost: l.coversCostPct, valuePer: l.valuePerRupeePct,
+  };
+}
+
+/* ===================== THEME 01 · THE CLIMB ===================== */
+function Climb({ st }) {
+  const d = meterData(st);
+  const h = Math.max(4, Math.min(100, d.freedomPct));
   return (
-    <div className={s.panel}>
-      <h3 className={s.pH}>Work — kept separate <span className={s.side} style={{ color: "var(--income)" }}>not your cashflow</span></h3>
-      <div className={s.workAmt}>{inr(p.reimbursements.reduce((t, r) => t + Math.max(0, r.outstanding), 0))}</div>
-      <div className={s.workSub}>fronted for companies · owed back to you</div>
-      <div style={{ marginTop: 12 }}>
-        {p.reimbursements.map((r) => (
-          <div className={s.coRow} key={r.company}>
-            <span>{r.company}</span>
-            <span className="num">{r.outstanding > 0 ? inr(r.outstanding) : "settled"}
-              {r.outstanding > 0 && <button className={s.claimBtn} disabled={busy} onClick={() => resolve({ action: "claim", company: r.company })} style={{ marginLeft: 8 }}>claim</button>}
-            </span>
-          </div>
-        ))}
+    <div className={s.hero}>
+      <div className={s.climbStage}>
+        <div className={s.climbCol}>
+          <div className={s.climbFill} style={{ height: h + "%" }} />
+          <div className={s.you} style={{ bottom: h + "%" }}>▲</div>
+        </div>
+        <div className={s.climbCapTop}>Free · passive covers life</div>
+        <div className={s.climbCapBot}>Base camp</div>
       </div>
-      <div className={s.workSub} style={{ marginTop: 10 }}>A receivable, never a personal expense. Flyy stays its own book.</div>
-    </div>
-  );
-}
-
-function IncomeStatement({ p }) {
-  return (
-    <div className={s.panel}>
-      <h3 className={s.pH}>Income statement <span className={s.side}>Personal</span></h3>
-      <Group cls="active" label="Income · active" total={p.income.total - p.income.passiveTotal} rows={p.income.active} />
-      <Group cls="passive" label="Income · passive" total={p.income.passiveTotal} rows={p.income.passive}
-        empty="No asset pays you yet — this is the number the game grows" />
-      <Group cls="fixed" label="Expenses · fixed" total={p.expenses.fixedTotal} rows={p.expenses.fixed} />
-      <Group cls="vary" label="Expenses · variable" total={p.expenses.variableTotal} rows={p.expenses.variable.slice(0, 5)} />
-      <div className={s.payday}><span>Payday</span><span className={p.payday >= 0 ? s.pos : s.neg}>{inr(p.payday)}</span></div>
-    </div>
-  );
-}
-
-function Group({ cls, label, total, rows, empty }) {
-  return (
-    <div className={s.grp}>
-      <div className={`${s.grpH} ${s[cls]}`}><span>{label}</span><span className={`${s.gt} num`}>{inr(total)}</span></div>
-      {rows.length ? rows.map((r) => (
-        <div className={s.li} key={r.account}><span>{r.label}</span><span className={`${s.v} num`}>{inr(r.amount)}</span></div>
-      )) : empty ? <div className={`${s.li} ${s.empty}`}><span>{empty}</span><span>₹0</span></div> : null}
-    </div>
-  );
-}
-
-function BalanceSheet({ p }) {
-  const bs = p.balanceSheet;
-  return (
-    <div className={s.panel} style={{ marginTop: 13 }}>
-      <h3 className={s.pH}>Balance sheet — as of today</h3>
-      <div className={s.bs}>
-        <div>
-          <h4>Assets · {compact(bs.assetsTotal)}</h4>
-          {bs.assets.slice(0, 5).map((a) => <div className={s.li} key={a.account}><span>{a.label}</span><span className={`${s.v} num`}>{inr(a.amount)}</span></div>)}
-        </div>
-        <div>
-          <h4>Liabilities · {compact(bs.liabilitiesTotal)}</h4>
-          {bs.liabilities.slice(0, 5).map((a) => <div className={s.li} key={a.account}><span>{a.label}</span><span className={`${s.v} num`}>{inr(a.amount)}</span></div>)}
-        </div>
-        <div className={s.bsNet}><span>Net worth</span><span className={bs.netWorth >= 0 ? s.pos : s.neg}>{inr(bs.netWorth)}</span></div>
+      <div className={s.heroText}>
+        <div className={s.big} style={{ color: "var(--ac)" }}>{d.freedomPct}%<span className={s.bigsub}> to free</span></div>
+        <p className={s.pitch}>Passive income <b>{compact(d.passive)}/mo</b> against a <b>{compact(d.life)}/mo</b> life. Every venture that pays cash lifts you.</p>
+        <Leverage d={d} tint="You've deployed {C} of leverage — it's the rope pulling you up, producing {P}/mo against a {K}/mo cost." />
       </div>
     </div>
   );
 }
 
-function Moves({ m, p, busy, resolve }) {
+/* ===================== THEME 02 · THE BOARD ===================== */
+function Board({ st }) {
+  const d = meterData(st);
+  const pos = Math.min(7, Math.floor((d.freedomPct / 100) * 8));
+  const tiles = [0, 1, 2, 3, 4, 5, 6, 7];
+  return (
+    <div className={s.hero}>
+      <div className={s.boardStage}>
+        <div className={s.boardLoop}>
+          {tiles.map((i) => <span key={i} className={`${s.tile} ${i === pos ? s.tileYou : ""}`} style={{ "--i": i }} />)}
+          <div className={s.boardCenter}>Rat Race<small>exit when passive ≥ life</small></div>
+        </div>
+      </div>
+      <div className={s.heroText}>
+        <div className={s.big} style={{ color: "var(--ac)" }}>{d.freedomPct}%<span className={s.bigsub}> round the loop</span></div>
+        <p className={s.pitch}>Your token is <b>{d.freedomPct}%</b> toward the exit. Passive <b>{compact(d.passive)}/mo</b> vs life <b>{compact(d.life)}/mo</b>.</p>
+        <Leverage d={d} tint="Loans are the assets you bought to play: {C} deployed, throwing {P}/mo, sitting against {B}." />
+      </div>
+    </div>
+  );
+}
+
+/* ===================== THEME 03 · THE MACHINE ===================== */
+function Machine({ st }) {
+  const d = meterData(st);
+  return (
+    <div className={s.hero}>
+      <div className={s.machineStage}>
+        <div className={s.gear} /><div className={s.gear2} />
+        <div className={s.tank}><div className={s.tankFill} style={{ height: Math.max(3, Math.min(100, d.freedomPct)) + "%" }} /><span className={s.tankPct}>{d.freedomPct}%</span></div>
+      </div>
+      <div className={s.heroText}>
+        <div className={s.big} style={{ color: "var(--ac)" }}>{compact(d.produces)}<span className={s.bigsub}>/mo flowing</span></div>
+        <p className={s.pitch}>The engine mints <b>{compact(d.produces)}/mo</b> of passive income; tank fills to <b>{d.freedomPct}%</b> of your <b>{compact(d.life)}/mo</b> life. 100% = it runs itself.</p>
+        <Leverage d={d} tint="{C} of capital fuels the machine, producing {V}% of what it costs — every ₹1 sits against {R}× value." />
+      </div>
+    </div>
+  );
+}
+
+/* ===================== THEME 04 · THE SEASON ===================== */
+function Season({ st }) {
+  const d = meterData(st);
+  const won = st.cashflow >= 0;
+  const form = ["W", "L", "W", "L", won ? "W" : "L"];
+  return (
+    <div className={s.hero}>
+      <div className={s.seasonStage}>
+        <div className={s.form}>{form.map((r, i) => <span key={i} className={r === "W" ? s.pillW : s.pillL}>{r}</span>)}</div>
+        <div className={s.result} style={{ color: won ? "var(--win)" : "var(--lose)" }}>{won ? "W" : "L"} {inr(st.cashflow)}</div>
+        <div className={s.resSub}>this period's result</div>
+      </div>
+      <div className={s.heroText}>
+        <div className={s.big} style={{ color: "var(--ac)" }}>{d.freedomPct}%<span className={s.bigsub}> table position</span></div>
+        <p className={s.pitch}>Win a period by ending in the black. Passive <b>{compact(d.passive)}/mo</b> is your reliable scorer vs a <b>{compact(d.life)}/mo</b> opponent.</p>
+        <Leverage d={d} tint="Squad value {B}, bought with {C} of transfer budget returning {P}/mo." />
+      </div>
+    </div>
+  );
+}
+
+/* ===================== THEME 05 · THE QUEST ===================== */
+function Quest({ st, ...p }) {
+  const d = meterData(st);
+  return (
+    <div className={s.hero}>
+      <div className={s.questStage}>
+        <div className={s.badge}>{Math.max(1, Math.floor(d.freedomPct / 20) + 1)}</div>
+        <div className={s.xpwrap}><div className={s.xplabel}>Wage Earner → <span style={{ color: "var(--ac)" }}>Investor</span></div><div className={s.xpbar}><div style={{ width: Math.max(4, d.freedomPct) + "%" }} /></div><div className={s.xpsub}>{d.freedomPct}% to the next level</div></div>
+      </div>
+      <div className={s.heroText}>
+        <div className={s.big} style={{ color: "var(--ac)" }}>Lvl {Math.max(1, Math.floor(d.freedomPct / 20) + 1)}</div>
+        <p className={s.pitch}>XP is passive income: <b>{compact(d.passive)}/mo</b> of <b>{compact(d.life)}/mo</b>. Hit Investor when it covers your life.</p>
+        <Leverage d={d} tint="Leverage is your mana — {C} channelled, producing {P}/mo, powering {B} of holdings." />
+      </div>
+    </div>
+  );
+}
+
+/* ---------- shared LEVERAGE readout (neutral) ---------- */
+function Leverage({ d, tint }) {
+  const txt = tint
+    .replace("{C}", compact(d.deployed)).replace("{P}", compact(d.produces)).replace("{K}", compact(d.cost))
+    .replace("{B}", compact(d.building)).replace("{V}", d.coversCost ?? "—").replace("{R}", ((d.valuePer || 0) / 100).toFixed(1));
+  return (
+    <div className={s.lev}>
+      <div className={s.levHead}><span>Capital in play</span><b>{compact(d.deployed)}</b></div>
+      <div className={s.levBars}>
+        <div className={s.levBar}><span>produces</span><div className={s.track}><div style={{ width: Math.min(100, (d.coversCost || 0) / 3) + "%", background: "var(--win)" }} /></div><b>{compact(d.produces)}/mo</b></div>
+        <div className={s.levBar}><span>costs</span><div className={s.track}><div style={{ width: "33%", background: "var(--mut2)" }} /></div><b>{compact(d.cost)}/mo</b></div>
+      </div>
+      <div className={s.levNote}>{txt} <span className={s.levTag}>{d.coversCost != null ? `${d.coversCost}% of cost covered` : "add ventures to score it"}</span></div>
+    </div>
+  );
+}
+
+/* ---------- shared detail: statement · moves · ventures ---------- */
+function Detail({ st, mv, ventures, busy, resolve, saveVenture }) {
+  return (
+    <div className={s.detail}>
+      <div className={s.grid2}>
+        <Statement st={st} />
+        <Ventures ventures={ventures} busy={busy} save={saveVenture} />
+      </div>
+      <Moves mv={mv} busy={busy} resolve={resolve} />
+    </div>
+  );
+}
+
+function Statement({ st }) {
+  const G = (label, cls, total, rows) => (
+    <div className={s.grp}><div className={`${s.grpH} ${cls}`}><span>{label}</span><span>{inr(total)}</span></div>
+      {rows.slice(0, 4).map((r) => <div className={s.li} key={r.account}><span>{r.label}</span><b>{inr(r.amount)}</b></div>)}
+      {!rows.length && <div className={s.liE}>—</div>}</div>
+  );
+  return (
+    <div className={s.card}>
+      <h3>Income statement</h3>
+      {G("Income · active", s.gActive, st.income.activeTotal, st.income.active)}
+      {G("Income · passive", s.gPassive, st.income.passiveLedger, st.income.passive)}
+      {G("Expenses · fixed", s.gFixed, st.expenses.fixedTotal, st.expenses.fixed)}
+      {G("Expenses · variable", s.gVar, st.expenses.variableTotal, st.expenses.variable)}
+      <div className={s.payday}><span>Cashflow</span><b className={st.cashflow >= 0 ? s.pos : s.neg}>{inr(st.cashflow)}</b></div>
+    </div>
+  );
+}
+
+function Ventures({ ventures, busy, save }) {
+  const [add, setAdd] = useState(false);
+  const [f, setF] = useState({ name: "", kind: "equity", value: "", monthlyReturn: "" });
+  const submit = () => { if (f.name) { save({ ...f, value: Number(f.value) || 0, monthlyReturn: Number(f.monthlyReturn) || 0 }); setAdd(false); setF({ name: "", kind: "equity", value: "", monthlyReturn: "" }); } };
+  return (
+    <div className={s.card}>
+      <h3>Ventures &amp; equity <span className={s.hint}>what your capital builds</span></h3>
+      {ventures.map((v) => (
+        <div className={s.vRow} key={v.name}>
+          <span className={s.vName}>{v.name} <em>{v.kind}</em></span>
+          <span className={s.vNums}><b>{compact(v.value)}</b>{v.monthly_return ? <i>{compact(v.monthly_return)}/mo</i> : null}</span>
+        </div>
+      ))}
+      {!ventures.length && <div className={s.liE}>None yet — add what aikaara / flyy / arthsutra are worth.</div>}
+      {add ? (
+        <div className={s.vForm}>
+          <input placeholder="Name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
+          <select value={f.kind} onChange={(e) => setF({ ...f, kind: e.target.value })}>{["equity", "venture", "loan_out", "property", "other"].map((k) => <option key={k}>{k}</option>)}</select>
+          <input placeholder="Worth ₹" inputMode="numeric" value={f.value} onChange={(e) => setF({ ...f, value: e.target.value.replace(/[^\d]/g, "") })} />
+          <input placeholder="₹/mo cash" inputMode="numeric" value={f.monthlyReturn} onChange={(e) => setF({ ...f, monthlyReturn: e.target.value.replace(/[^\d]/g, "") })} />
+          <button className={s.ok} disabled={busy || !f.name} onClick={submit}>Save</button>
+        </div>
+      ) : <button className={s.addV} onClick={() => setAdd(true)}>+ Add a venture / stake</button>}
+    </div>
+  );
+}
+
+function Moves({ mv, busy, resolve }) {
   const CATS = ["Expenses:Dining", "Expenses:Travel:Cabs", "Expenses:Shopping", "Expenses:Sports", "Expenses:Health"];
-  const [adding, setAdding] = useState(false);
+  const total = mv.review.length + mv.claim.length + (mv.missing_commitments?.length || 0);
   return (
-    <>
-      <div className={s.sort}>
-        <div className={s.sortH}><span className={s.t}>Sort out this month — {m.counts.review + m.counts.claim + m.counts.missing} moves</span></div>
-        <div className={s.moves}>
-          <div className={s.move}><div className={`${s.n} num`}>{m.counts.review}</div><div className={s.k}>to <b>review</b></div></div>
-          <div className={s.move}><div className={`${s.n} num`}>{m.counts.claim}</div><div className={s.k}><b>reimbursements</b> to claim</div></div>
-          <div className={s.move}><div className={`${s.n} num`}>{m.counts.missing}</div><div className={s.k}><b>commitments</b> missing</div></div>
-          <button className={s.move} style={{ textAlign: "left", cursor: "pointer" }} onClick={() => setAdding((v) => !v)}>
-            <div className={`${s.n}`} style={{ fontSize: 15, marginTop: 4 }}>+ add</div><div className={s.k}>investment / one-time</div>
-          </button>
-        </div>
-        {adding && <AddForm busy={busy} resolve={resolve} onDone={() => setAdding(false)} />}
+    <div className={s.moves}>
+      <div className={s.movesH}>Your moves this period <b>{total}</b></div>
+      <div className={s.moveCards}>
+        <div className={s.moveC}><b>{mv.review.length}</b><span>to review</span></div>
+        <div className={s.moveC}><b>{mv.claim.length}</b><span>reimbursements</span></div>
+        <div className={s.moveC}><b>{mv.missing_commitments?.length || 0}</b><span>missing</span></div>
+        <div className={s.moveC}><b>{mv.claim.reduce((t, c) => t + c.outstanding, 0) ? compact(mv.claim.reduce((t, c) => t + c.outstanding, 0)) : "—"}</b><span>owed to you</span></div>
       </div>
-      {m.review.length > 0 && (
-        <>
-          <div className={s.sectionTitle}>Review — pick a category, it learns</div>
-          <div className={s.reviewList}>
-            {m.review.slice(0, 8).map((r) => (
-              <ReviewRow key={r.id} r={r} cats={CATS} busy={busy} resolve={resolve} />
-            ))}
-          </div>
-        </>
-      )}
-    </>
+      {mv.claim.map((c) => (
+        <div className={s.claimRow} key={c.company}><span>{c.company} owes <b>{inr(c.outstanding)}</b></span>
+          <button className={s.ok} disabled={busy} onClick={() => resolve({ action: "claim", company: c.company })}>Claim</button></div>
+      ))}
+      {mv.review.slice(0, 6).map((r) => <ReviewRow key={r.id} r={r} cats={CATS} busy={busy} resolve={resolve} />)}
+    </div>
   );
 }
-
 function ReviewRow({ r, cats, busy, resolve }) {
-  // Default to the learned decision for this payee (the "it learns" loop), else first cat.
-  const options = r.suggestion && !cats.includes(r.suggestion) ? [r.suggestion, ...cats] : cats;
+  const opts = r.suggestion && !cats.includes(r.suggestion) ? [r.suggestion, ...cats] : cats;
   const [to, setTo] = useState(r.suggestion || cats[0]);
   return (
-    <div className={s.rItem}>
-      <span className={s.rdate}>{r.date}</span>
-      <span>{r.payee || "(no payee)"} <span style={{ color: "var(--muted)" }}>· {r.reason}</span>
-        {r.suggestion && <span style={{ color: "var(--good-text)", marginLeft: 6 }}>· learned</span>}</span>
-      <select className={s.pick} value={to} onChange={(e) => setTo(e.target.value)}>
-        {options.map((c) => <option key={c} value={c}>{c.split(":").slice(1).join(" · ")}</option>)}
-      </select>
-      <button className={s.ok} disabled={busy}
-        onClick={() => resolve({ action: "reclassify", txnId: r.id, fromAccount: r.account, toAccount: to, makeRule: true })}>
-        {inr(r.amount)} ✓
-      </button>
+    <div className={s.rRow}>
+      <span className={s.rDate}>{r.date}</span>
+      <span className={s.rWhat}>{r.payee || "(no payee)"} <em>{r.reason}{r.suggestion ? " · learned" : ""}</em></span>
+      <select value={to} onChange={(e) => setTo(e.target.value)}>{opts.map((c) => <option key={c} value={c}>{c.split(":").slice(1).join(" · ")}</option>)}</select>
+      <button className={s.ok} disabled={busy} onClick={() => resolve({ action: "reclassify", txnId: r.id, fromAccount: r.account, toAccount: to, makeRule: true })}>{inr(r.amount)} ✓</button>
     </div>
-  );
-}
-
-function AddForm({ busy, resolve, onDone }) {
-  const [what, setWhat] = useState("");
-  const [amount, setAmount] = useState("");
-  const [to, setTo] = useState("Assets:Investments:Gold");
-  const [from, setFrom] = useState("Assets:Cash");
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
-  const kinds = [
-    ["Assets:Investments:Gold", "Gold"], ["Assets:Investments:MF", "Mutual fund"],
-    ["Assets:Investments:Chits", "Chit fund"], ["Assets:Investments:Deposits", "Deposit / FD"],
-    ["Expenses:Travel:Hotels", "One-time · travel"], ["Expenses:Other", "One-time · other"],
-  ];
-  const froms = [["Assets:Cash", "Cash"], ["Assets:Bank:IDBI", "Bank"], ["Equity:Opening", "Opening balance"]];
-  const ok = Number(amount) > 0;
-  const submit = async () => {
-    if (!ok) return;
-    await resolve({ action: "add", date, amount: Number(amount), toAccount: to, fromAccount: from, note: what || "Manual entry" });
-    onDone();
-  };
-  return (
-    <div className={s.addForm}>
-      <input className={s.fi} placeholder="What (e.g. Gold bought in cash)" value={what} onChange={(e) => setWhat(e.target.value)} />
-      <input className={s.fi} placeholder="Amount ₹" value={amount} inputMode="decimal" onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ""))} />
-      <select className={s.fi} value={to} onChange={(e) => setTo(e.target.value)}>{kinds.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
-      <select className={s.fi} value={from} onChange={(e) => setFrom(e.target.value)}>{froms.map(([v, l]) => <option key={v} value={v}>from {l}</option>)}</select>
-      <input className={s.fi} type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-      <button className={s.ok} disabled={busy || !ok} onClick={submit}>Add to books</button>
-    </div>
-  );
-}
-
-function GameView({ p, m, busy, resolve }) {
-  const idle = p.balanceSheet.assets.filter((a) => a.account.startsWith("Assets:Investments") || a.account.includes("Demat")).reduce((t, a) => t + a.amount, 0);
-  return (
-    <>
-      <div className={s.hero}>
-        <div className={s.heroH}>
-          <span className={s.heroLbl}>Escaping the rat race</span>
-          <span className={`${s.heroPct} num`} style={{ color: p.freedom >= 100 ? "var(--good-text)" : "var(--expense)" }}>{p.freedom}%</span>
-        </div>
-        <div className={s.heroTitle}>Passive income covers <b>{p.freedom}%</b> of your expenses.</div>
-        <div className={s.bigtrack}><div className={s.bigfill} style={{ width: `${Math.max(2, Math.min(100, p.freedom))}%` }} /></div>
-        <div className={s.legend}>
-          <span>Passive income <b>{compact(p.income.passiveTotal)}/mo</b></span>
-          <span>Expenses <b>{compact(p.expenses.total)}</b></span>
-          <span>Idle assets <b>{compact(idle)}</b></span>
-        </div>
-      </div>
-      <div className={s.grid2}>
-        <IncomeStatement p={p} />
-        <Reimbursements p={p} busy={busy} resolve={resolve} />
-      </div>
-      <BalanceSheet p={p} />
-      <div style={{ marginTop: 14 }}><Moves m={m} p={p} busy={busy} resolve={resolve} /></div>
-    </>
-  );
-}
-
-function DashboardView({ p, m, busy, resolve }) {
-  return (
-    <>
-      <div className={s.grid2}>
-        <IncomeStatement p={p} />
-        <Reimbursements p={p} busy={busy} resolve={resolve} />
-      </div>
-      <BalanceSheet p={p} />
-      <div className={s.sectionTitle}>Committed savings this month · {inr(p.savings.total)}</div>
-      <div className={s.panel}>
-        {p.savings.committed.length ? p.savings.committed.map((a) => (
-          <div className={s.li} key={a.account}><span>{a.label}</span><span className={`${s.v} num`}>{inr(a.amount)}</span></div>
-        )) : <div className={`${s.li} ${s.empty}`}><span>nothing invested this month</span><span>₹0</span></div>}
-      </div>
-      <div style={{ marginTop: 14 }}><Moves m={m} p={p} busy={busy} resolve={resolve} /></div>
-    </>
   );
 }
