@@ -1,7 +1,11 @@
 {
   "name": "finops",
   "private": true,
-  "scripts": { "dev": "next dev", "build": "next build", "start": "next start" },
+  "scripts": {
+    "dev": "next dev",
+    "build": "NODE_ENV=production next build",
+    "start": "next start"
+  },
   "dependencies": {
     "next": "14.2.5",
     "react": "18.3.1",
