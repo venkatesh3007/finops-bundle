@@ -39,6 +39,7 @@ export default function GameClient({ entity = "personal" }) {
         <div className={s.brand}>finops<span style={{ color: ac }}>·</span>play</div>
         <div className={s.tabs}>
           <button className={tab === "play" ? s.tabOn : s.tab} onClick={() => setTab("play")}>Play</button>
+          <button className={tab === "world" ? s.tabOn : s.tab} onClick={() => setTab("world")}>World</button>
           <button className={tab === "status" ? s.tabOn : s.tab} onClick={() => setTab("status")}>Status</button>
         </div>
         <div className={s.themeDots}>
@@ -49,7 +50,121 @@ export default function GameClient({ entity = "personal" }) {
         </div>
       </div>
 
-      {tab === "play" ? <Play entity={entity} /> : <Status entity={entity} theme={theme} />}
+      {tab === "play" ? <Play entity={entity} />
+        : tab === "world" ? <World entity={entity} />
+        : <Status entity={entity} theme={theme} />}
+    </div>
+  );
+}
+
+/* ===================================================================== */
+/* ==================  WORLD — Pack · Loot · Quests  =================== */
+/* ===================================================================== */
+function World({ entity }) {
+  const [w, setW] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(async () => {
+    const j = await (await fetch(`/api/game/pack?entity=${entity}`)).json();
+    setW(j);
+  }, [entity]);
+  useEffect(() => { setW(null); load(); }, [load]);
+
+  const quest = useCallback(async (body) => {
+    setBusy(true);
+    try { const j = await (await fetch("/api/game/pack", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ entity, ...body }) })).json(); if (!j.error) await load(); }
+    finally { setBusy(false); }
+  }, [entity, load]);
+
+  if (!w) return <div className={s.loading}>Loading your world…</div>;
+  if (w.error) return <div className={s.loading}>⚠ {w.error}</div>;
+  return (
+    <div className={s.world}>
+      <ThePack pack={w.pack} />
+      <div className={s.worldGrid}>
+        <TheLoot loot={w.loot} />
+        <TheQuests quests={w.quests} busy={busy} quest={quest} />
+      </div>
+    </div>
+  );
+}
+
+function ThePack({ pack }) {
+  const t = pack.totals;
+  return (
+    <div className={s.pack}>
+      <div className={s.packHead}>
+        <div><h3>The Pack</h3><span className={s.packSub}>capital in play — the leverage you chose to carry</span></div>
+        <div className={s.packTot}>
+          <div><b>{compact(t.inPlay)}</b><span>in play</span></div>
+          <div><b>{compact(t.dragMonthly)}</b><span>drag / mo</span></div>
+          <div><b>{t.defeated}</b><span>defeated</span></div>
+        </div>
+      </div>
+      <div className={s.bosses}>
+        {pack.bosses.map((b) => (
+          <div key={b.name} className={`${s.boss} ${b.defeated ? s.bossDead : ""}`}>
+            <div className={s.bossTop}>
+              <b>{b.name}</b>
+              {b.defeated ? <span className={s.bossKO}>DEFEATED</span> : <span className={s.bossOwed}>{compact(b.owed)}</span>}
+            </div>
+            <div className={s.hpTrack}><div className={s.hpFill} style={{ width: b.hpPct + "%" }} /></div>
+            <div className={s.bossFoot}>
+              {b.defeated ? <span className={s.bossZero}>cleared · was {compact(b.peak)}</span>
+                : <><span>{b.paidPct}% down of {compact(b.peak)}</span>{b.dragMonthly > 0 && <span className={s.bossDrag}>−{compact(b.dragMonthly)}/mo drag</span>}</>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const evIcon = (k) => ({ investment: "◆", loan_emi: "▼", insurance: "⛨", chit_payout: "★", vesting: "✦", premium: "⛨", payday: "▲" }[k] || "•");
+function TheLoot({ loot }) {
+  return (
+    <div className={s.card}>
+      <h3>Loot &amp; dues <span className={s.hint}>next {loot.horizonDays} days · {compact(loot.total)} scheduled</span></h3>
+      {loot.events.length === 0 && <div className={s.liE}>Nothing scheduled in the window.</div>}
+      {loot.events.map((e, i) => (
+        <div className={s.lootRow} key={i}>
+          <span className={s.lootIcon} data-k={e.direction}>{evIcon(e.kind)}</span>
+          <span className={s.lootName}>{e.name}<em>{e.date}</em></span>
+          <b className={e.direction === "save" ? s.lootSave : s.lootPay}>{e.direction === "save" ? "" : "−"}{compact(e.amount)}</b>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TheQuests({ quests, busy, quest }) {
+  const [add, setAdd] = useState(false);
+  const [title, setTitle] = useState("");
+  const open = quests.filter((q) => q.status === "open");
+  const done = quests.filter((q) => q.status === "done");
+  return (
+    <div className={s.card}>
+      <h3>Quests <span className={s.hint}>{open.length} open · the only unexplained items</span></h3>
+      {open.map((q) => (
+        <div className={s.quest} key={q.id}>
+          <div className={s.questMain}>
+            <b>{q.title}</b>
+            {q.reward && <span className={s.questReward}>{q.reward}</span>}
+          </div>
+          <div className={s.questRight}>
+            {q.rewardInr ? <span className={s.questInr}>{compact(q.rewardInr)}</span> : null}
+            <button className={s.questDone} disabled={busy} title="mark resolved" onClick={() => quest({ action: "quest_done", id: q.id })}>✓</button>
+            <button className={s.questDrop} disabled={busy} title="drop" onClick={() => quest({ action: "quest_drop", id: q.id })}>✕</button>
+          </div>
+        </div>
+      ))}
+      {!open.length && <div className={s.liE}>No open quests — the book is fully explained. 🎉</div>}
+      {add ? (
+        <div className={s.questAdd}>
+          <input placeholder="New open item…" value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && title.trim() && (quest({ action: "quest_add", title: title.trim() }), setTitle(""), setAdd(false))} />
+          <button className={s.ok} disabled={busy || !title.trim()} onClick={() => { quest({ action: "quest_add", title: title.trim() }); setTitle(""); setAdd(false); }}>Add</button>
+        </div>
+      ) : <button className={s.addV} onClick={() => setAdd(true)}>+ Park an item</button>}
+      {done.length > 0 && <div className={s.questDoneList}>{done.length} resolved · {done.slice(0, 3).map((q) => q.title.split("(")[0].slice(0, 22)).join(" · ")}{done.length > 3 ? "…" : ""}</div>}
     </div>
   );
 }

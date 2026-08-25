@@ -318,3 +318,54 @@
   .head{ grid-template-columns:auto 1fr; } .headRight{ grid-column:1/-1; just-content:space-between; }
   .exc{ flex-direction:column; } .excActs{ width:100%; }
 }
+
+/* ============================================================= */
+/* ==================  WORLD — Pack·Loot·Quests  =============== */
+/* ============================================================= */
+.world{ margin-top:16px; }
+.worldGrid{ display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:14px; }
+
+/* the Pack — loan bosses */
+.pack{ background:linear-gradient(180deg,var(--panel),var(--panel2)); border:1px solid var(--line); border-radius:18px; padding:18px 20px; position:relative; overflow:hidden; }
+.pack::before{ content:""; position:absolute; inset:0 auto 0 0; width:4px; background:var(--lose); }
+.packHead{ display:flex; align-items:flex-start; justify-content:space-between; gap:14px; flex-wrap:wrap; }
+.packHead h3{ margin:0; font-size:15px; font-weight:800; letter-spacing:-.01em; }
+.packSub{ font-size:12px; color:var(--mut); }
+.packTot{ display:flex; gap:16px; }
+.packTot div{ text-align:right; } .packTot b{ display:block; font-size:17px; font-weight:800; font-variant-numeric:tabular-nums; } .packTot span{ font-size:10.5px; color:var(--mut); }
+.bosses{ display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:11px; margin-top:16px; }
+.boss{ background:var(--bg2); border:1px solid var(--line2); border-radius:12px; padding:12px 13px; }
+.bossDead{ opacity:.62; }
+.bossTop{ display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+.bossTop b{ font-size:14px; font-weight:700; }
+.bossOwed{ font-size:13px; font-weight:800; color:var(--lose); font-variant-numeric:tabular-nums; }
+.bossKO{ font-size:10px; font-weight:800; letter-spacing:.1em; color:var(--win); border:1px solid var(--win); border-radius:5px; padding:2px 7px; transform:rotate(-4deg); }
+.hpTrack{ height:9px; border-radius:5px; background:#0c0e13; overflow:hidden; border:1px solid var(--line2); }
+.hpFill{ height:100%; border-radius:5px; background:linear-gradient(90deg,var(--lose),#b8323f); transition:width .5s; }
+.bossDead .hpFill{ background:var(--faint); }
+.bossFoot{ display:flex; justify-content:space-between; gap:8px; margin-top:7px; font-size:11px; color:var(--mut); font-variant-numeric:tabular-nums; }
+.bossDrag{ color:var(--gold); } .bossZero{ color:var(--win); }
+
+/* Loot — the calendar */
+.lootRow{ display:flex; align-items:center; gap:11px; padding:8px 0; border-top:1px solid var(--line); font-size:13px; }
+.lootRow:first-of-type{ border-top:0; }
+.lootIcon{ width:24px; height:24px; border-radius:7px; display:grid; place-items:center; font-size:12px; background:var(--bg2); border:1px solid var(--line2); color:var(--mut); flex-shrink:0; }
+.lootIcon[data-k="save"]{ color:var(--win); border-color:color-mix(in srgb,var(--win) 40%,transparent); }
+.lootName{ flex:1; min-width:0; } .lootName em{ display:block; font-style:normal; font-size:11px; color:var(--faint); font-variant-numeric:tabular-nums; }
+.lootPay{ color:var(--ink); font-variant-numeric:tabular-nums; } .lootSave{ color:var(--win); font-variant-numeric:tabular-nums; }
+
+/* Quests */
+.quest{ display:flex; align-items:flex-start; justify-content:space-between; gap:10px; padding:11px 0; border-top:1px solid var(--line); }
+.quest:first-of-type{ border-top:0; }
+.questMain{ min-width:0; } .questMain>b{ font-size:13.5px; font-weight:650; display:block; word-break:break-word; }
+.questReward{ font-size:11.5px; color:var(--mut); display:block; margin-top:2px; }
+.questRight{ display:flex; align-items:center; gap:6px; flex-shrink:0; }
+.questInr{ font-size:12px; font-weight:800; color:var(--gold); font-variant-numeric:tabular-nums; }
+.questDone,.questDrop{ font:inherit; width:28px; height:28px; border-radius:8px; cursor:pointer; border:1px solid var(--line2); background:var(--bg2); }
+.questDone{ color:var(--win); } .questDrop{ color:var(--mut); }
+.questDone:hover{ border-color:var(--win); } .questDrop:hover{ border-color:var(--lose); }
+.questAdd{ display:flex; gap:6px; margin-top:10px; }
+.questAdd input{ flex:1; font:inherit; font-size:13px; background:var(--bg2); border:1px solid var(--line2); color:var(--ink); border-radius:8px; padding:8px 10px; }
+.questDoneList{ margin-top:11px; padding-top:9px; border-top:1px solid var(--line); font-size:11px; color:var(--faint); }
+
+@media (max-width:760px){ .worldGrid{ grid-template-columns:1fr; } .packTot{ width:100%; justify-content:space-between; } }

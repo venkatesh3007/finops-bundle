@@ -127,6 +127,26 @@ async function _POST(req) {
       } catch (e) { await client.query("rollback"); throw e; } finally { client.release(); }
     }
 
+    // QUESTS import — the open-items register (docs/parked-items.md) as quests.
+    // Idempotent on (entity, title). Content lives in the DB, never the public repo.
+    if (action === "import-quests") {
+      const { entity = "personal", quests = [] } = b;
+      const ent = await query("select id from entities where slug=$1", [entity]);
+      if (!ent.length) return Response.json({ error: `no entity ${entity}` }, { status: 400 });
+      const entId = ent[0].id;
+      let n = 0;
+      for (const q of quests) {
+        await query(
+          `insert into quests (entity_id, title, reward_desc, reward_inr, linked_item, status)
+           values ($1,$2,$3,$4,$5,coalesce($6,'open'))
+           on conflict (entity_id, title) do update
+             set reward_desc=excluded.reward_desc, reward_inr=excluded.reward_inr, linked_item=excluded.linked_item`,
+          [entId, q.title, q.reward || null, q.rewardInr ?? null, q.linked || null, q.status || null]);
+        n++;
+      }
+      return Response.json({ ok: true, imported: n });
+    }
+
     return Response.json({ error: `unknown action: ${action}` }, { status: 400 });
   } catch (e) {
     return Response.json({ error: String(e?.message || e) }, { status: 500 });
