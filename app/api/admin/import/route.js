@@ -1,5 +1,5 @@
 import { pool, query } from "../../../../lib/db";
-import { SCHEMA_SQL, VENTURES_SQL, SEED_COMMITMENTS_SQL } from "../../../../lib/schema";
+import { SCHEMA_SQL, VENTURES_SQL, GAME_SQL, SEED_COMMITMENTS_SQL } from "../../../../lib/schema";
 
 export const maxDuration = 60;
 
@@ -20,9 +20,10 @@ async function ensureSchema() {
       res = "created-noext";
     }
   }
-  // ventures shipped after the first migration; its DDL is create-if-not-exists,
-  // so run it every ensure to bring an already-migrated DB up to date.
+  // ventures + game tables shipped after the first migration; their DDL is all
+  // create-if-not-exists, so run every ensure to bring an already-migrated DB up to date.
   await pool().query(VENTURES_SQL);
+  await pool().query(GAME_SQL);
   await pool().query("alter table vettings drop constraint if exists vettings_status_check; alter table vettings add constraint vettings_status_check check (status in ('unvetted','ok','wrong','review'));").catch(()=>{});
   return res;
 }
@@ -91,6 +92,38 @@ async function _POST(req) {
 
         await client.query("commit");
         return Response.json({ ok: true, inserted, of: txns.length });
+      } catch (e) { await client.query("rollback"); throw e; } finally { client.release(); }
+    }
+
+    // PLAN import — the owner's monthly plan (notes/YYYY-MM.md, parsed by
+    // scripts/parse_plan.py) becomes first-class plan_lines. Idempotent on
+    // (entity,month,bucket,label). Optionally replaces a month's lines first.
+    if (action === "import-plan") {
+      const { entity = "personal", lines = [], replaceMonths = false } = b;
+      const client = await pool().connect();
+      try {
+        await client.query("begin");
+        const ent = await client.query("select id from entities where slug=$1", [entity]);
+        if (!ent.rows.length) throw new Error(`no entity ${entity}`);
+        const entId = ent.rows[0].id;
+        if (replaceMonths) {
+          const months = [...new Set(lines.map((l) => l.month))];
+          if (months.length) await client.query("delete from plan_lines where entity_id=$1 and month = any($2)", [entId, months]);
+        }
+        let n = 0;
+        for (const l of lines) {
+          await client.query(
+            `insert into plan_lines (entity_id, month, bucket, label, amount, actual, counterparty_hint, recurring, source)
+             values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+             on conflict (entity_id, month, bucket, label) do update
+               set amount=excluded.amount, actual=excluded.actual,
+                   counterparty_hint=excluded.counterparty_hint, recurring=excluded.recurring, source=excluded.source`,
+            [entId, l.month, l.bucket, l.label, l.amount, l.actual ?? null, l.counterparty_hint ?? null, !!l.recurring, l.source || `notes/${l.month}.md`],
+          );
+          n++;
+        }
+        await client.query("commit");
+        return Response.json({ ok: true, imported: n });
       } catch (e) { await client.query("rollback"); throw e; } finally { client.release(); }
     }
 

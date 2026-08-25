@@ -13,21 +13,11 @@ const compact = (n) => {
 };
 const lastDay = (y, m) => new Date(y, m, 0).getDate();
 const pad = (n) => String(n).padStart(2, "0");
-
-// period kind + anchor → {from, to, label}
-function rangeOf(kind, a) {
-  if (kind === "month") { const [y, m] = a.split("-").map(Number); return { from: `${y}-${pad(m)}-01`, to: `${y}-${pad(m)}-${lastDay(y, m)}`, label: new Date(y, m - 1).toLocaleString("en", { month: "long", year: "numeric" }) }; }
-  if (kind === "quarter") { const [y, q] = a.split("Q").map(Number); const sm = (q - 1) * 3 + 1; return { from: `${y}-${pad(sm)}-01`, to: `${y}-${pad(sm + 2)}-${lastDay(y, sm + 2)}`, label: `Q${q} ${y} · ${new Date(y, sm - 1).toLocaleString("en", { month: "short" })}–${new Date(y, sm + 1).toLocaleString("en", { month: "short" })}` }; }
-  if (kind === "year") { const y = Number(a); return { from: `${y}-04-01`, to: `${y + 1}-03-31`, label: `FY ${String(y).slice(2)}–${String(y + 1).slice(2)}` }; }
-  return { from: a.from, to: a.to, label: "Custom" };
-}
-function stepAnchor(kind, a, d) {
-  if (kind === "month") { let [y, m] = a.split("-").map(Number); m += d; if (m > 12) { m = 1; y++; } if (m < 1) { m = 12; y--; } return `${y}-${pad(m)}`; }
-  if (kind === "quarter") { let [y, q] = a.split("Q").map(Number); q += d; if (q > 4) { q = 1; y++; } if (q < 1) { q = 4; y--; } return `${y}Q${q}`; }
-  if (kind === "year") return String(Number(a) + d);
-  return a;
-}
-const defaultAnchor = { month: "2026-08", quarter: "2026Q3", year: "2025", custom: { from: "2025-04-01", to: "2026-08-31" } };
+const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const monLabel = (m) => { const [y, mo] = m.split("-").map(Number); return `${MON[mo - 1]} ${String(y).slice(2)}`; };
+const monLong = (m) => { const [y, mo] = m.split("-").map(Number); return new Date(y, mo - 1).toLocaleString("en", { month: "long", year: "numeric" }); };
+// which Indian FY (Apr–Mar) a month belongs to → the FY start year
+const fyOf = (m) => { const [y, mo] = m.split("-").map(Number); return mo >= 4 ? y : y - 1; };
 
 const THEMES = [
   { id: "climb", name: "Climb", ac: "#f2c14e" },
@@ -40,14 +30,346 @@ const THEMES = [
 /* ---------- root ---------- */
 export default function GameClient({ entity = "personal" }) {
   const [theme, setTheme] = useState("climb");
+  const [tab, setTab] = useState("play"); // play (the board) | status (the meters)
+  const ac = THEMES.find((t) => t.id === theme).ac;
+
+  return (
+    <div className={s.app} data-theme={theme} style={{ "--ac": ac }}>
+      <div className={s.top}>
+        <div className={s.brand}>finops<span style={{ color: ac }}>·</span>play</div>
+        <div className={s.tabs}>
+          <button className={tab === "play" ? s.tabOn : s.tab} onClick={() => setTab("play")}>Play</button>
+          <button className={tab === "status" ? s.tabOn : s.tab} onClick={() => setTab("status")}>Status</button>
+        </div>
+        <div className={s.themeDots}>
+          {THEMES.map((t) => (
+            <button key={t.id} title={t.name} className={theme === t.id ? s.dotOn : s.dot}
+              onClick={() => setTheme(t.id)} style={{ "--d": t.ac }} />
+          ))}
+        </div>
+      </div>
+
+      {tab === "play" ? <Play entity={entity} /> : <Status entity={entity} theme={theme} />}
+    </div>
+  );
+}
+
+/* ===================================================================== */
+/* ======================  PLAY — the cleanup game  ==================== */
+/* ===================================================================== */
+function Play({ entity }) {
+  const nowFy = 2026; // current FY (Apr'26–Mar'27); season strip lets you walk back
+  const [fy, setFy] = useState(nowFy);
+  const [season, setSeason] = useState(null);
+  const [month, setMonth] = useState(null);
+
+  const loadSeason = useCallback(async (year) => {
+    const j = await (await fetch(`/api/game/season?entity=${entity}&fy=${year}`)).json();
+    setSeason(j);
+    // default the open month to the latest month in this FY that has data
+    const withData = (j.months || []).filter((m) => m.hasData);
+    setMonth((cur) => (cur && j.months.some((m) => m.month === cur)) ? cur : (withData.length ? withData[withData.length - 1].month : j.months[0].month));
+  }, [entity]);
+  useEffect(() => { loadSeason(fy); }, [fy, loadSeason]);
+
+  if (!season) return <div className={s.loading}>Loading your season…</div>;
+
+  return (
+    <div className={s.play}>
+      <SeasonStrip season={season} fy={fy} setFy={setFy} month={month} setMonth={setMonth} />
+      {month && <MonthBoard entity={entity} month={month} onChanged={() => loadSeason(fy)} />}
+    </div>
+  );
+}
+
+/* ---------- the season: 12 months you navigate (yearly view) ---------- */
+function SeasonStrip({ season, fy, setFy, month, setMonth }) {
+  const locked = season.months.filter((m) => m.locked).length;
+  const played = season.months.filter((m) => m.hasData).length;
+  return (
+    <div className={s.season}>
+      <div className={s.seasonHead}>
+        <button className={s.fyStep} onClick={() => setFy(fy - 1)} aria-label="previous year">‹</button>
+        <div className={s.fyLabel}>
+          <b>FY {String(fy).slice(2)}–{String(fy + 1).slice(2)}</b>
+          <small>{locked}/{played} months sealed</small>
+        </div>
+        <button className={s.fyStep} onClick={() => setFy(fy + 1)} aria-label="next year">›</button>
+      </div>
+      <div className={s.monthRow}>
+        {season.months.map((m) => {
+          const state = !m.hasData ? "empty" : m.locked ? "locked" : m.hasPlan ? "open" : "nodata";
+          return (
+            <button key={m.month}
+              className={`${s.mTile} ${s["mt_" + state]} ${m.month === month ? s.mTileOn : ""}`}
+              disabled={!m.hasData} onClick={() => setMonth(m.month)}>
+              <span className={s.mtName}>{MON[Number(m.month.split("-")[1]) - 1]}</span>
+              {m.locked ? <span className={s.mtSeal}>✓</span>
+                : m.hasData ? <span className={s.mtDot} /> : <span className={s.mtNil}>·</span>}
+              {m.locked && m.lockedExceptions != null && <span className={s.mtEx}>{m.lockedExceptions}</span>}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- the board for one month: PLAN → REALITY → LOCK ---------- */
+function MonthBoard({ entity, month, onChanged }) {
+  const [board, setBoard] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [expand, setExpand] = useState(false);
+  const [payoff, setPayoff] = useState(null);
+  const [showDeferred, setShowDeferred] = useState(false);
+
+  const load = useCallback(async () => {
+    const j = await (await fetch(`/api/game/month?entity=${entity}&month=${month}`)).json();
+    setBoard(j);
+  }, [entity, month]);
+  useEffect(() => { setBoard(null); setExpand(false); setShowDeferred(false); load(); }, [load]);
+
+  const card = useCallback(async (body) => {
+    setBusy(true);
+    try {
+      const j = await (await fetch("/api/game/card", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ entity, month, ...body }) })).json();
+      if (!j.error) await load();
+      return j;
+    } finally { setBusy(false); }
+  }, [entity, month, load]);
+
+  const lock = useCallback(async () => {
+    setBusy(true);
+    try {
+      const j = await (await fetch("/api/game/lock", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ entity, month }) })).json();
+      if (!j.error) { setPayoff(j); await load(); onChanged?.(); }
+    } finally { setBusy(false); }
+  }, [entity, month, load, onChanged]);
+
+  if (!board) return <div className={s.loading}>Dealing {monLong(month)}…</div>;
+  if (board.error) return <div className={s.loading}>⚠ {board.error}</div>;
+
+  const cleared = board.exceptions === 0;
+  const misses = board.cards.filter((c) => c.kind === "miss");
+
+  return (
+    <div className={s.board}>
+      <BoardHead board={board} onLock={lock} busy={busy} />
+
+      {/* the auto-matched reel — collapsed by default (never the raw pile) */}
+      <button className={s.autoBar} onClick={() => setExpand((x) => !x)}>
+        <span className={s.autoTick}>✓</span>
+        <span><b>{board.totals.autoMatched + board.totals.manualMatched}</b> of {board.totals.planLines} planned lines matched to reality
+          {board.totals.absorbed ? <em> · {board.totals.absorbed} small items absorbed</em> : null}</span>
+        <span className={s.autoChevron}>{expand ? "▾" : "▸"}</span>
+      </button>
+      {expand && <MatchedReel entity={entity} month={month} />}
+
+      {/* the exceptions — the only thing you actually touch */}
+      {cleared ? (
+        <div className={s.allClear}>
+          <div className={s.allClearMark}>✓</div>
+          <b>Nothing needs you.</b>
+          <span>{monLong(month)} reconciled to {board.coverage.plan}% of plan. {board.locked ? "Sealed." : "Lock it to bank the streak."}</span>
+        </div>
+      ) : (
+        <div className={s.cards}>
+          {board.cards.map((c) => c.kind === "miss"
+            ? <MissCard key={c.planLineId} c={c} busy={busy} card={card} />
+            : <SurpriseCard key={c.txnId} c={c} misses={misses} cats={board.categories} busy={busy} card={card} />)}
+        </div>
+      )}
+
+      {/* deferred — the review-later stack */}
+      {board.deferred.length > 0 && (
+        <div className={s.deferred}>
+          <button className={s.defHead} onClick={() => setShowDeferred((x) => !x)}>
+            ⏳ {board.deferred.length} parked for review {showDeferred ? "▾" : "▸"}
+          </button>
+          {showDeferred && board.deferred.map((c) => (
+            <SurpriseCard key={c.txnId} c={c} misses={misses} cats={board.categories} busy={busy} card={card} parked />
+          ))}
+        </div>
+      )}
+
+      {payoff && <LockSeal payoff={payoff} month={month} onClose={() => setPayoff(null)} />}
+    </div>
+  );
+}
+
+/* the header: coverage dial · N-need-you · streak · LOCK */
+function BoardHead({ board, onLock, busy }) {
+  const pct = board.coverage.plan;
+  const R = 30, C = 2 * Math.PI * R, off = C * (1 - pct / 100);
+  return (
+    <div className={s.head}>
+      <div className={s.dial}>
+        <svg viewBox="0 0 72 72" className={s.dialSvg}>
+          <circle cx="36" cy="36" r={R} className={s.dialTrack} />
+          <circle cx="36" cy="36" r={R} className={s.dialFill} strokeDasharray={C} strokeDashoffset={off} transform="rotate(-90 36 36)" />
+        </svg>
+        <div className={s.dialPct}><b>{pct}</b><span>%</span></div>
+      </div>
+      <div className={s.headMid}>
+        <div className={s.headMonth}>{monLong(board.month)}{board.locked && <span className={s.sealed}>SEALED</span>}</div>
+        <div className={s.needYou}>
+          {board.exceptions === 0
+            ? <span className={s.needClear}>All matched — nothing needs you</span>
+            : <><b>{board.exceptions}</b> need you</>}
+        </div>
+        <div className={s.headSub}>plan {board.coverage.plan}% · value handled {board.coverage.handled}%</div>
+      </div>
+      <div className={s.headRight}>
+        {board.streak > 0 && <div className={s.streak}>🔥 {board.streak}<small>streak</small></div>}
+        <button className={s.lockBtn} disabled={busy || board.locked} onClick={onLock}>
+          {board.locked ? "Sealed ✓" : board.exceptions === 0 ? "Lock month" : `Lock (${board.exceptions} open)`}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* a planned line that never landed — the player rules on it */
+function MissCard({ c, busy, card }) {
+  return (
+    <div className={`${s.exc} ${s.excMiss}`}>
+      <div className={s.excLeft}>
+        <span className={`${s.chip} ${s["b_" + c.bucket]}`}>{bucketLabel(c.bucket)}</span>
+        <div className={s.excMain}>
+          <b>{c.label}</b>
+          <span className={s.excMeta}>planned {inr(c.planned)}{c.hint ? ` · ${c.hint}` : ""} — no matching {c.dir === "in" ? "receipt" : "payment"} found</span>
+        </div>
+      </div>
+      <div className={s.excActs}>
+        <button className={s.actGhost} disabled={busy} onClick={() => card({ action: "carry", planLineId: c.planLineId })}>Carry →</button>
+        <button className={s.actGhost} disabled={busy} onClick={() => card({ action: "skip", planLineId: c.planLineId })}>Didn't happen</button>
+      </div>
+    </div>
+  );
+}
+
+/* an unplanned real transaction ≥₹10k — the case file + one-tap calls */
+function SurpriseCard({ c, misses, cats, busy, card, parked }) {
+  const [mode, setMode] = useState(null); // null | 'cat' | 'link' | 'plan'
+  const [pick, setPick] = useState(misses[0]?.planLineId || "");
+  const isIncome = c.flow === "income";
+  const bucket = isIncome ? "var_in" : "var_out";
+  const label = (c.payee || c.narration || "Unplanned").slice(0, 40);
+
+  return (
+    <div className={`${s.exc} ${s.excSurprise} ${parked ? s.excParked : ""}`}>
+      <div className={s.excLeft}>
+        <span className={`${s.chip} ${isIncome ? s.b_var_in : s.b_var_out}`}>{isIncome ? "unexpected in" : "unplanned"}</span>
+        <div className={s.excMain}>
+          <b>{c.payee || c.narration || "(no description)"}</b>
+          <span className={s.excMeta}>
+            {c.date} · <b className={s.amt}>{inr(c.amount)}</b>
+            {c.statement ? ` · via ${leaf(c.statement)}` : ""}
+            {c.account ? ` · ${leaf(c.account)}` : ""}
+          </span>
+          {c.narration && c.payee && <span className={s.excNarr}>{c.narration}</span>}
+          {c.doc && <span className={s.excDoc}>📄 {docName(c.doc)}</span>}
+        </div>
+      </div>
+
+      {!mode ? (
+        <div className={s.excActs}>
+          {c.canCategorize && <button className={s.actPrimary} disabled={busy} onClick={() => setMode("cat")}>Categorize</button>}
+          {misses.length > 0 && <button className={s.actGhost} disabled={busy} onClick={() => setMode("link")}>Was planned</button>}
+          <button className={s.actGhost} disabled={busy} onClick={() => card({ action: "newline", bucket, label, amount: c.amount, txnId: c.txnId })}>Add to plan</button>
+          <button className={s.actGhost} disabled={busy} onClick={() => card({ action: "accept", txnId: c.txnId })}>Accept</button>
+          {!parked && <button className={s.actGhost} disabled={busy} onClick={() => card({ action: "review", txnId: c.txnId })}>Later</button>}
+        </div>
+      ) : mode === "cat" ? (
+        <div className={s.chipPick}>
+          {cats.slice(0, 12).map((a) => (
+            <button key={a} className={s.catChip} disabled={busy} onClick={() => card({ action: "categorize", txnId: c.txnId, toAccount: a, makeRule: true })}>{leaf(a)}</button>
+          ))}
+          <button className={s.pickBack} onClick={() => setMode(null)}>✕</button>
+        </div>
+      ) : mode === "link" ? (
+        <div className={s.linkPick}>
+          <select value={pick} onChange={(e) => setPick(e.target.value)}>
+            {misses.map((m) => <option key={m.planLineId} value={m.planLineId}>{m.label} · {inr(m.planned)}</option>)}
+          </select>
+          <button className={s.actPrimary} disabled={busy || !pick} onClick={() => card({ action: "link", planLineId: pick, txnId: c.txnId })}>Match ✓</button>
+          <button className={s.pickBack} onClick={() => setMode(null)}>✕</button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/* the auto-matched lines, revealed on demand (proof the game did the work) */
+function MatchedReel({ entity, month }) {
+  // The board already knows the counts; the detail here is a lightweight fetch of
+  // the plan lines that matched, straight from the same endpoint's matched set.
+  const [rows, setRows] = useState(null);
+  useEffect(() => {
+    let live = true;
+    fetch(`/api/game/month?entity=${entity}&month=${month}`).then((r) => r.json()).then((j) => {
+      if (!live) return;
+      // matched aren't returned on the board payload (kept lean); show the absorbed/total tallies instead.
+      setRows(j);
+    });
+    return () => { live = false; };
+  }, [entity, month]);
+  if (!rows) return <div className={s.reelLoad}>…</div>;
+  return (
+    <div className={s.reel}>
+      <div className={s.reelNote}>
+        The matcher ticked <b>{rows.totals.autoMatched}</b> planned lines automatically and folded
+        <b> {rows.totals.absorbed}</b> small everyday items into the variable bucket — so you only see the {rows.exceptions} that genuinely need a call.
+      </div>
+    </div>
+  );
+}
+
+/* the payoff — a stamp/seal moment when a month locks */
+function LockSeal({ payoff, month, onClose }) {
+  return (
+    <div className={s.sealOverlay} onClick={onClose}>
+      <div className={s.sealCard} onClick={(e) => e.stopPropagation()}>
+        <div className={s.sealStamp}>SEALED</div>
+        <div className={s.sealMonth}>{monLong(month)}</div>
+        <div className={s.sealStats}>
+          <div><b>{payoff.coverage?.plan ?? "—"}%</b><span>of plan matched</span></div>
+          <div><b>{payoff.exceptions ?? 0}</b><span>calls made</span></div>
+          <div><b>🔥 {payoff.streak ?? 1}</b><span>month streak</span></div>
+        </div>
+        <button className={s.sealClose} onClick={onClose}>Onward →</button>
+      </div>
+    </div>
+  );
+}
+
+const bucketLabel = (b) => ({ fixed_in: "fixed in", var_in: "variable in", fixed_out: "fixed", var_out: "variable", work: "work" }[b] || b);
+const leaf = (a) => (a || "").split(":").slice(1).join(" · ");
+const docName = (d) => { const b = d.split("/").pop(); return b.length > 26 ? b.slice(0, 26) + "…" : b; };
+
+/* ===================================================================== */
+/* =====================  STATUS — the themed meters  ================== */
+/* ===================================================================== */
+const lastDayISO = (y, m) => `${y}-${pad(m)}-${lastDay(y, m)}`;
+function statusRange(kind, a) {
+  if (kind === "month") { const [y, m] = a.split("-").map(Number); return { from: `${y}-${pad(m)}-01`, to: lastDayISO(y, m), label: new Date(y, m - 1).toLocaleString("en", { month: "long", year: "numeric" }) }; }
+  if (kind === "quarter") { const [y, q] = a.split("Q").map(Number); const sm = (q - 1) * 3 + 1; return { from: `${y}-${pad(sm)}-01`, to: lastDayISO(y, sm + 2), label: `Q${q} ${y}` }; }
+  const y = Number(a); return { from: `${y}-04-01`, to: `${y + 1}-03-31`, label: `FY ${String(y).slice(2)}–${String(y + 1).slice(2)}` };
+}
+function stepAnchor(kind, a, d) {
+  if (kind === "month") { let [y, m] = a.split("-").map(Number); m += d; if (m > 12) { m = 1; y++; } if (m < 1) { m = 12; y--; } return `${y}-${pad(m)}`; }
+  if (kind === "quarter") { let [y, q] = a.split("Q").map(Number); q += d; if (q > 4) { q = 1; y++; } if (q < 1) { q = 4; y--; } return `${y}Q${q}`; }
+  return String(Number(a) + d);
+}
+
+function Status({ entity, theme }) {
   const [kind, setKind] = useState("month");
-  const [anchor, setAnchor] = useState(defaultAnchor);
-  const range = useMemo(() => rangeOf(kind, kind === "custom" ? anchor.custom : anchor[kind]), [kind, anchor]);
+  const [anchor, setAnchor] = useState({ month: "2026-08", quarter: "2026Q3", year: "2025" });
+  const range = useMemo(() => statusRange(kind, anchor[kind]), [kind, anchor]);
   const [data, setData] = useState(null);
   const [ventures, setVentures] = useState([]);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
-  const [view, setView] = useState("board"); // board (score) | sort (the work)
 
   const load = useCallback(async () => {
     const r = await fetch(`/api/game?entity=${entity}&from=${range.from}&to=${range.to}`);
@@ -67,113 +389,65 @@ export default function GameClient({ entity = "personal" }) {
       if (!j.error) await load();
     } finally { setBusy(false); setTimeout(() => setToast(""), 2600); }
   }, [entity, load]);
-  const resolve = (b) => act("/api/game/move", b);
   const saveVenture = (b) => act("/api/ventures", b);
-
   const step = (d) => setAnchor((a) => ({ ...a, [kind]: stepAnchor(kind, a[kind], d) }));
 
-  if (!data) return <div className={s.loading}>Loading your board…</div>;
-  const st = data.state, mv = data.moves;
+  if (!data) return <div className={s.loading}>Loading your position…</div>;
+  const st = data.state;
   const Hero = { climb: Climb, board: Board, machine: Machine, season: Season, quest: Quest }[theme];
-  const ac = THEMES.find((t) => t.id === theme).ac;
 
   return (
-    <div className={s.app} data-theme={theme} style={{ "--ac": ac }}>
-      <div className={s.top}>
-        <div className={s.brand}>finops<span style={{ color: ac }}>·</span>play</div>
-        <div className={s.themes}>
-          {THEMES.map((t) => (
-            <button key={t.id} className={theme === t.id ? s.themeOn : s.themeBtn} onClick={() => setTheme(t.id)} style={theme === t.id ? { "--ac": t.ac } : {}}>{t.name}</button>
-          ))}
-        </div>
-      </div>
-
+    <div className={s.status}>
       <div className={s.periods}>
         <div className={s.seg}>
-          {["year", "quarter", "month", "custom"].map((k) => (
+          {["year", "quarter", "month"].map((k) => (
             <button key={k} className={kind === k ? s.segOn : ""} onClick={() => setKind(k)}>{k[0].toUpperCase() + k.slice(1)}</button>
           ))}
         </div>
-        {kind !== "custom" ? (
-          <div className={s.stepper}>
-            <button onClick={() => step(-1)} aria-label="prev">‹</button>
-            <span>{range.label}</span>
-            <button onClick={() => step(1)} aria-label="next">›</button>
-          </div>
-        ) : (
-          <div className={s.custom}>
-            <input type="date" value={anchor.custom.from} onChange={(e) => setAnchor((a) => ({ ...a, custom: { ...a.custom, from: e.target.value } }))} />
-            <span>→</span>
-            <input type="date" value={anchor.custom.to} onChange={(e) => setAnchor((a) => ({ ...a, custom: { ...a.custom, to: e.target.value } }))} />
-          </div>
-        )}
+        <div className={s.stepper}>
+          <button onClick={() => step(-1)} aria-label="prev">‹</button>
+          <span>{range.label}</span>
+          <button onClick={() => step(1)} aria-label="next">›</button>
+        </div>
       </div>
-
-      {view === "sort" ? (
-        <SortMode entity={entity} onBack={() => { setView("board"); load(); }} />
-      ) : (
-        <>
-          <button className={s.sortCTA} onClick={() => setView("sort")}>
-            <span className={s.sortCTAn}>{mv.review.length}+</span>
-            <span className={s.sortCTAt}><b>Sort your transactions</b><small>read each statement line, put it where it belongs — the board goes true as you go</small></span>
-            <span className={s.sortCTAgo}>Play →</span>
-          </button>
-          <Hero st={st} range={range} />
-          <Detail st={st} mv={mv} ventures={ventures} busy={busy} resolve={resolve} saveVenture={saveVenture} />
-        </>
-      )}
-
+      <Hero st={st} range={range} />
+      <div className={s.detail}>
+        <div className={s.grid2}>
+          <Statement st={st} />
+          <Ventures ventures={ventures} busy={busy} save={saveVenture} />
+        </div>
+      </div>
       {toast && <div className={s.toast}>{toast}</div>}
     </div>
   );
 }
 
-/* ---------- the two meters (shared data, themes wrap them) ---------- */
 function meterData(st) {
   const f = st.meters.freedom, l = st.meters.leverage;
-  return {
-    freedomPct: f.pct, passive: f.passiveMonthly, life: f.expenseMonthly,
-    deployed: l.deployed, cost: l.costMonthly, produces: l.producingMonthly,
-    building: l.building, coversCost: l.coversCostPct, valuePer: l.valuePerRupeePct,
-  };
+  return { freedomPct: f.pct, passive: f.passiveMonthly, life: f.expenseMonthly, deployed: l.deployed, cost: l.costMonthly, produces: l.producingMonthly, building: l.building, coversCost: l.coversCostPct, valuePer: l.valuePerRupeePct };
 }
 
-/* ===================== THEME 01 · THE CLIMB ===================== */
 function Climb({ st }) {
-  const d = meterData(st);
-  const h = Math.max(4, Math.min(100, d.freedomPct));
+  const d = meterData(st); const h = Math.max(4, Math.min(100, d.freedomPct));
   return (
     <div className={s.hero}>
       <div className={s.climbStage}>
-        <div className={s.climbCol}>
-          <div className={s.climbFill} style={{ height: h + "%" }} />
-          <div className={s.you} style={{ bottom: h + "%" }}>▲</div>
-        </div>
-        <div className={s.climbCapTop}>Free · passive covers life</div>
-        <div className={s.climbCapBot}>Base camp</div>
+        <div className={s.climbCol}><div className={s.climbFill} style={{ height: h + "%" }} /><div className={s.you} style={{ bottom: h + "%" }}>▲</div></div>
+        <div className={s.climbCapTop}>Free · passive covers life</div><div className={s.climbCapBot}>Base camp</div>
       </div>
       <div className={s.heroText}>
         <div className={s.big} style={{ color: "var(--ac)" }}>{d.freedomPct}%<span className={s.bigsub}> to free</span></div>
         <p className={s.pitch}>Passive income <b>{compact(d.passive)}/mo</b> against a <b>{compact(d.life)}/mo</b> life. Every venture that pays cash lifts you.</p>
-        <Leverage d={d} tint="You've deployed {C} of leverage — it's the rope pulling you up, producing {P}/mo against a {K}/mo cost." />
+        <Leverage d={d} tint="You've deployed {C} of leverage — the rope pulling you up, producing {P}/mo against a {K}/mo cost." />
       </div>
     </div>
   );
 }
-
-/* ===================== THEME 02 · THE BOARD ===================== */
 function Board({ st }) {
-  const d = meterData(st);
-  const pos = Math.min(7, Math.floor((d.freedomPct / 100) * 8));
-  const tiles = [0, 1, 2, 3, 4, 5, 6, 7];
+  const d = meterData(st); const pos = Math.min(7, Math.floor((d.freedomPct / 100) * 8));
   return (
     <div className={s.hero}>
-      <div className={s.boardStage}>
-        <div className={s.boardLoop}>
-          {tiles.map((i) => <span key={i} className={`${s.tile} ${i === pos ? s.tileYou : ""}`} style={{ "--i": i }} />)}
-          <div className={s.boardCenter}>Rat Race<small>exit when passive ≥ life</small></div>
-        </div>
-      </div>
+      <div className={s.boardStage}><div className={s.boardLoop}>{[0, 1, 2, 3, 4, 5, 6, 7].map((i) => <span key={i} className={`${s.tile} ${i === pos ? s.tileYou : ""}`} style={{ "--i": i }} />)}<div className={s.boardCenter}>Rat Race<small>exit when passive ≥ life</small></div></div></div>
       <div className={s.heroText}>
         <div className={s.big} style={{ color: "var(--ac)" }}>{d.freedomPct}%<span className={s.bigsub}> round the loop</span></div>
         <p className={s.pitch}>Your token is <b>{d.freedomPct}%</b> toward the exit. Passive <b>{compact(d.passive)}/mo</b> vs life <b>{compact(d.life)}/mo</b>.</p>
@@ -182,69 +456,47 @@ function Board({ st }) {
     </div>
   );
 }
-
-/* ===================== THEME 03 · THE MACHINE ===================== */
 function Machine({ st }) {
   const d = meterData(st);
   return (
     <div className={s.hero}>
-      <div className={s.machineStage}>
-        <div className={s.gear} /><div className={s.gear2} />
-        <div className={s.tank}><div className={s.tankFill} style={{ height: Math.max(3, Math.min(100, d.freedomPct)) + "%" }} /><span className={s.tankPct}>{d.freedomPct}%</span></div>
-      </div>
+      <div className={s.machineStage}><div className={s.gear} /><div className={s.gear2} /><div className={s.tank}><div className={s.tankFill} style={{ height: Math.max(3, Math.min(100, d.freedomPct)) + "%" }} /><span className={s.tankPct}>{d.freedomPct}%</span></div></div>
       <div className={s.heroText}>
         <div className={s.big} style={{ color: "var(--ac)" }}>{compact(d.produces)}<span className={s.bigsub}>/mo flowing</span></div>
-        <p className={s.pitch}>The engine mints <b>{compact(d.produces)}/mo</b> of passive income; tank fills to <b>{d.freedomPct}%</b> of your <b>{compact(d.life)}/mo</b> life. 100% = it runs itself.</p>
+        <p className={s.pitch}>The engine mints <b>{compact(d.produces)}/mo</b> of passive income; tank fills to <b>{d.freedomPct}%</b> of your <b>{compact(d.life)}/mo</b> life.</p>
         <Leverage d={d} tint="{C} of capital fuels the machine, producing {V}% of what it costs — every ₹1 sits against {R}× value." />
       </div>
     </div>
   );
 }
-
-/* ===================== THEME 04 · THE SEASON ===================== */
 function Season({ st }) {
-  const d = meterData(st);
-  const won = st.cashflow >= 0;
-  const form = ["W", "L", "W", "L", won ? "W" : "L"];
+  const d = meterData(st); const won = st.cashflow >= 0; const form = ["W", "L", "W", "L", won ? "W" : "L"];
   return (
     <div className={s.hero}>
-      <div className={s.seasonStage}>
-        <div className={s.form}>{form.map((r, i) => <span key={i} className={r === "W" ? s.pillW : s.pillL}>{r}</span>)}</div>
-        <div className={s.result} style={{ color: won ? "var(--win)" : "var(--lose)" }}>{won ? "W" : "L"} {inr(st.cashflow)}</div>
-        <div className={s.resSub}>this period's result</div>
-      </div>
+      <div className={s.seasonStage}><div className={s.form}>{form.map((r, i) => <span key={i} className={r === "W" ? s.pillW : s.pillL}>{r}</span>)}</div><div className={s.result} style={{ color: won ? "var(--win)" : "var(--lose)" }}>{won ? "W" : "L"} {inr(st.cashflow)}</div><div className={s.resSub}>this period's result</div></div>
       <div className={s.heroText}>
         <div className={s.big} style={{ color: "var(--ac)" }}>{d.freedomPct}%<span className={s.bigsub}> table position</span></div>
-        <p className={s.pitch}>Win a period by ending in the black. Passive <b>{compact(d.passive)}/mo</b> is your reliable scorer vs a <b>{compact(d.life)}/mo</b> opponent.</p>
+        <p className={s.pitch}>Win a period by ending in the black. Passive <b>{compact(d.passive)}/mo</b> vs a <b>{compact(d.life)}/mo</b> opponent.</p>
         <Leverage d={d} tint="Squad value {B}, bought with {C} of transfer budget returning {P}/mo." />
       </div>
     </div>
   );
 }
-
-/* ===================== THEME 05 · THE QUEST ===================== */
-function Quest({ st, ...p }) {
-  const d = meterData(st);
+function Quest({ st }) {
+  const d = meterData(st); const lvl = Math.max(1, Math.floor(d.freedomPct / 20) + 1);
   return (
     <div className={s.hero}>
-      <div className={s.questStage}>
-        <div className={s.badge}>{Math.max(1, Math.floor(d.freedomPct / 20) + 1)}</div>
-        <div className={s.xpwrap}><div className={s.xplabel}>Wage Earner → <span style={{ color: "var(--ac)" }}>Investor</span></div><div className={s.xpbar}><div style={{ width: Math.max(4, d.freedomPct) + "%" }} /></div><div className={s.xpsub}>{d.freedomPct}% to the next level</div></div>
-      </div>
+      <div className={s.questStage}><div className={s.badge}>{lvl}</div><div className={s.xpwrap}><div className={s.xplabel}>Wage Earner → <span style={{ color: "var(--ac)" }}>Investor</span></div><div className={s.xpbar}><div style={{ width: Math.max(4, d.freedomPct) + "%" }} /></div><div className={s.xpsub}>{d.freedomPct}% to the next level</div></div></div>
       <div className={s.heroText}>
-        <div className={s.big} style={{ color: "var(--ac)" }}>Lvl {Math.max(1, Math.floor(d.freedomPct / 20) + 1)}</div>
+        <div className={s.big} style={{ color: "var(--ac)" }}>Lvl {lvl}</div>
         <p className={s.pitch}>XP is passive income: <b>{compact(d.passive)}/mo</b> of <b>{compact(d.life)}/mo</b>. Hit Investor when it covers your life.</p>
         <Leverage d={d} tint="Leverage is your mana — {C} channelled, producing {P}/mo, powering {B} of holdings." />
       </div>
     </div>
   );
 }
-
-/* ---------- shared LEVERAGE readout (neutral) ---------- */
 function Leverage({ d, tint }) {
-  const txt = tint
-    .replace("{C}", compact(d.deployed)).replace("{P}", compact(d.produces)).replace("{K}", compact(d.cost))
-    .replace("{B}", compact(d.building)).replace("{V}", d.coversCost ?? "—").replace("{R}", ((d.valuePer || 0) / 100).toFixed(1));
+  const txt = tint.replace("{C}", compact(d.deployed)).replace("{P}", compact(d.produces)).replace("{K}", compact(d.cost)).replace("{B}", compact(d.building)).replace("{V}", d.coversCost ?? "—").replace("{R}", ((d.valuePer || 0) / 100).toFixed(1));
   return (
     <div className={s.lev}>
       <div className={s.levHead}><span>Capital in play</span><b>{compact(d.deployed)}</b></div>
@@ -256,20 +508,6 @@ function Leverage({ d, tint }) {
     </div>
   );
 }
-
-/* ---------- shared detail: statement · moves · ventures ---------- */
-function Detail({ st, mv, ventures, busy, resolve, saveVenture }) {
-  return (
-    <div className={s.detail}>
-      <div className={s.grid2}>
-        <Statement st={st} />
-        <Ventures ventures={ventures} busy={busy} save={saveVenture} />
-      </div>
-      <Moves mv={mv} busy={busy} resolve={resolve} />
-    </div>
-  );
-}
-
 function Statement({ st }) {
   const G = (label, cls, total, rows) => (
     <div className={s.grp}><div className={`${s.grpH} ${cls}`}><span>{label}</span><span>{inr(total)}</span></div>
@@ -287,7 +525,6 @@ function Statement({ st }) {
     </div>
   );
 }
-
 function Ventures({ ventures, busy, save }) {
   const [add, setAdd] = useState(false);
   const [f, setF] = useState({ name: "", kind: "equity", value: "", monthlyReturn: "" });
@@ -296,10 +533,7 @@ function Ventures({ ventures, busy, save }) {
     <div className={s.card}>
       <h3>Ventures &amp; equity <span className={s.hint}>what your capital builds</span></h3>
       {ventures.map((v) => (
-        <div className={s.vRow} key={v.name}>
-          <span className={s.vName}>{v.name} <em>{v.kind}</em></span>
-          <span className={s.vNums}><b>{compact(v.value)}</b>{v.monthly_return ? <i>{compact(v.monthly_return)}/mo</i> : null}</span>
-        </div>
+        <div className={s.vRow} key={v.name}><span className={s.vName}>{v.name} <em>{v.kind}</em></span><span className={s.vNums}><b>{compact(v.value)}</b>{v.monthly_return ? <i>{compact(v.monthly_return)}/mo</i> : null}</span></div>
       ))}
       {!ventures.length && <div className={s.liE}>None yet — add what aikaara / flyy / arthsutra are worth.</div>}
       {add ? (
@@ -311,120 +545,6 @@ function Ventures({ ventures, busy, save }) {
           <button className={s.ok} disabled={busy || !f.name} onClick={submit}>Save</button>
         </div>
       ) : <button className={s.addV} onClick={() => setAdd(true)}>+ Add a venture / stake</button>}
-    </div>
-  );
-}
-
-function Moves({ mv, busy, resolve }) {
-  const CATS = ["Expenses:Dining", "Expenses:Travel:Cabs", "Expenses:Shopping", "Expenses:Sports", "Expenses:Health"];
-  const total = mv.review.length + mv.claim.length + (mv.missing_commitments?.length || 0);
-  return (
-    <div className={s.moves}>
-      <div className={s.movesH}>Your moves this period <b>{total}</b></div>
-      <div className={s.moveCards}>
-        <div className={s.moveC}><b>{mv.review.length}</b><span>to review</span></div>
-        <div className={s.moveC}><b>{mv.claim.length}</b><span>reimbursements</span></div>
-        <div className={s.moveC}><b>{mv.missing_commitments?.length || 0}</b><span>missing</span></div>
-        <div className={s.moveC}><b>{mv.claim.reduce((t, c) => t + c.outstanding, 0) ? compact(mv.claim.reduce((t, c) => t + c.outstanding, 0)) : "—"}</b><span>owed to you</span></div>
-      </div>
-      {mv.claim.map((c) => (
-        <div className={s.claimRow} key={c.company}><span>{c.company} owes <b>{inr(c.outstanding)}</b></span>
-          <button className={s.ok} disabled={busy} onClick={() => resolve({ action: "claim", company: c.company })}>Claim</button></div>
-      ))}
-      {mv.review.slice(0, 6).map((r) => <ReviewRow key={r.id} r={r} cats={CATS} busy={busy} resolve={resolve} />)}
-    </div>
-  );
-}
-function ReviewRow({ r, cats, busy, resolve }) {
-  const opts = r.suggestion && !cats.includes(r.suggestion) ? [r.suggestion, ...cats] : cats;
-  const [to, setTo] = useState(r.suggestion || cats[0]);
-  return (
-    <div className={s.rRow}>
-      <span className={s.rDate}>{r.date}</span>
-      <span className={s.rWhat}>{r.payee || "(no payee)"} <em>{r.reason}{r.suggestion ? " · learned" : ""}</em></span>
-      <select value={to} onChange={(e) => setTo(e.target.value)}>{opts.map((c) => <option key={c} value={c}>{c.split(":").slice(1).join(" · ")}</option>)}</select>
-      <button className={s.ok} disabled={busy} onClick={() => resolve({ action: "reclassify", txnId: r.id, fromAccount: r.account, toAccount: to, makeRule: true })}>{inr(r.amount)} ✓</button>
-    </div>
-  );
-}
-
-/* ===================== THE SORT — the core loop ===================== */
-const EXP_CATS = [["Dining", "Expenses:Dining"], ["Groceries", "Expenses:Groceries"], ["Cabs", "Expenses:Travel:Cabs"],
-  ["Flights", "Expenses:Travel:Flights"], ["Hotels", "Expenses:Travel:Hotels"], ["Shopping", "Expenses:Shopping"],
-  ["Health", "Expenses:Health"], ["Subscriptions", "Expenses:Subscriptions"], ["Sports", "Expenses:Sports"],
-  ["Utilities", "Expenses:Utilities"], ["Gifts", "Expenses:Gifts"], ["Family", "Expenses:Family"]];
-const WORK = [["aikaara", "Assets:Receivable:Aikaara"], ["Flyy", "Assets:Receivable:Flyy"], ["Arthsutra", "Assets:Receivable:Arthsutra"]];
-const catLabel = (a) => a.split(":").slice(1).join(" · ");
-
-function SortMode({ entity, onBack }) {
-  const [q, setQ] = useState(null);
-  const [i, setI] = useState(0);
-  const [done, setDone] = useState(0);
-  const [streak, setStreak] = useState(0);
-  const [busy, setBusy] = useState(false);
-  const [custom, setCustom] = useState("");
-
-  const load = useCallback(async () => {
-    const j = await (await fetch(`/api/txns?entity=${entity}&queue=1&limit=40`)).json();
-    setQ(j); setI(0);
-  }, [entity]);
-  useEffect(() => { load(); }, [load]);
-  useEffect(() => { if (q && i >= q.txns.length && (q.pile || 0) > 0) load(); }, [i, q, load]);
-
-  const card = q?.txns[i];
-  const post = async (body, keepStreak) => {
-    if (!card || busy) return; setBusy(true);
-    try {
-      const r = await (await fetch("/api/game/move", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ entity, ...body }) })).json();
-      if (!r.error) { setDone((d) => d + 1); setStreak((k) => keepStreak ? k + 1 : 0); setI((x) => x + 1); }
-    } finally { setBusy(false); }
-  };
-  const sort = (toAccount) => post({ action: "reclassify", txnId: card.id, fromAccount: card.account, toAccount, makeRule: true }, true);
-  const review = () => post({ action: "review", txnId: card.id }, false);
-  const setCustomCat = () => { if (!custom.trim()) return; const a = custom.includes(":") ? custom : `Expenses:${custom.replace(/^\w/, (c) => c.toUpperCase())}`; sort(a); setCustom(""); };
-
-  const left = Math.max(0, (q?.pile || 0) - i);
-  const pct = q?.pile ? Math.min(100, Math.round((done / (done + left || 1)) * 100)) : 0;
-
-  return (
-    <div className={s.sort}>
-      <div className={s.sortTop}>
-        <button className={s.back} onClick={onBack}>‹ board</button>
-        <div className={s.sortProg}><b>{done}</b> sorted {streak > 2 && <span className={s.streak}>🔥 {streak}</span>}<span className={s.left}>~{left} left in the pile</span></div>
-      </div>
-      <div className={s.progbar}><div style={{ width: pct + "%" }} /></div>
-
-      {!q ? <div className={s.sortDone}>Loading the pile…</div>
-        : !card ? <div className={s.sortDone}>{left === 0 ? "🎉 Pile cleared — every rupee is where it belongs." : "Loading next…"}</div>
-        : (
-          <div className={s.sortCard} key={card.id}>
-            <div className={s.scHead}>
-              <span className={s.scDate}>{card.date}</span>
-              <span className={s.scStmt}>{card.statement || "manual / other"}</span>
-              {card.doc && <span className={s.scDoc}>📄 {card.doc.length > 22 ? card.doc.slice(0, 22) + "…" : card.doc}</span>}
-              <span className={`${s.scAmt} ${card.amount < 0 ? s.pos : ""}`}>{inr(card.amount)}</span>
-            </div>
-            <div className={s.scLine}>{card.narration || card.payee || "(no description on the statement)"}</div>
-            <div className={s.scNow}>sitting in <b>Other</b> — where did this money go?</div>
-
-            {card.suggestion && <button className={s.suggest} disabled={busy} onClick={() => sort(card.suggestion)}>↩ Suggested: <b>{catLabel(card.suggestion)}</b> · learned · one tap</button>}
-
-            <div className={s.catGrid}>
-              {EXP_CATS.map(([l, a]) => <button key={a} className={s.cat} disabled={busy} onClick={() => sort(a)}>{l}</button>)}
-            </div>
-            <div className={s.workRow}>
-              <span className={s.workLbl}>Work · reimbursable</span>
-              {WORK.map(([l, a]) => <button key={a} className={s.work} disabled={busy} onClick={() => sort(a)}>{l}</button>)}
-            </div>
-            <div className={s.customRow}>
-              <input placeholder="or type a category — e.g. Insurance, Rent…" value={custom} onChange={(e) => setCustom(e.target.value)} onKeyDown={(e) => e.key === "Enter" && setCustomCat()} />
-              <button className={s.ok} disabled={busy || !custom.trim()} onClick={setCustomCat}>Set</button>
-              <button className={s.reviewBtn} disabled={busy} onClick={review}>⏳ Review later</button>
-            </div>
-          </div>
-        )}
-
-      {q && (q.pile || 0) === 0 && done === 0 && <div className={s.sortDone}>Nothing in the pile — it's all sorted. 🎉</div>}
     </div>
   );
 }
