@@ -113,7 +113,7 @@ function ResetDialog({ entity, onClose }) {
 function Ledger({ entity }) {
   const [month, setMonth] = useState("");   // '' = all months
   const [text, setText] = useState("");
-  const [flows, setFlows] = useState(false);
+  const [flows, setFlows] = useState(true); // default: real bank/card statement lines (internal transfers hidden)
   const [rows, setRows] = useState(null);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
@@ -149,16 +149,27 @@ function Ledger({ entity }) {
       {!rows ? <div className={s.loading}>Loading the statement…</div> : (
         <>
           <div className={s.ledgerList}>
-            {rows.map((r) => (
-              <div className={s.stRow} key={r.id}>
-                <span className={s.stDate}>{r.date}</span>
-                <div className={s.stMid}>
-                  <b>{r.payee || r.narration || "(no description)"}</b>
-                  <span className={s.stSub}>{leaf(r.account)}{r.statement ? ` · via ${r.statement}` : ""}{r.doc ? ` · 📄 ${docName(r.doc)}` : ""}</span>
+            {rows.map((r) => {
+              // The raw bank-statement line lives in narration (e.g. "UPI/…/BILVA
+              // CHITS"); payee is often just the bank/counterparty. Show the real
+              // description first, the counterparty as a tag.
+              const narr = (r.narration || "").trim();
+              const desc = narr || r.payee || "(no description)";
+              const tag = narr && r.payee && r.payee.trim() ? r.payee.trim() : null;
+              return (
+                <div className={s.stRow} key={r.id}>
+                  <span className={s.stDate}>{r.date}</span>
+                  <div className={s.stMid}>
+                    <b title={desc}>{desc}</b>
+                    <span className={s.stSub}>
+                      {tag && <span className={s.stTag}>{tag}</span>}
+                      {leaf(r.account)}{r.statement ? ` · via ${r.statement}` : ""}{r.doc ? ` · 📄 ${docName(r.doc)}` : ""}
+                    </span>
+                  </div>
+                  <span className={`${s.stAmt} ${r.amount < 0 ? s.pos : ""}`}>{inr(Math.abs(r.amount))}</span>
                 </div>
-                <span className={`${s.stAmt} ${r.amount < 0 ? s.pos : ""}`}>{inr(Math.abs(r.amount))}</span>
-              </div>
-            ))}
+              );
+            })}
             {!rows.length && <div className={s.liE}>No lines match.</div>}
           </div>
           {rows.length < total && <button className={s.ledgerMore} onClick={() => load(false)}>Load more ({total - rows.length} left)</button>}

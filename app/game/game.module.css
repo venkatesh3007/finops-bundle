@@ -487,6 +487,7 @@
 .stDate{ font-size:12px; color:var(--faint); font-variant-numeric:tabular-nums; }
 .stMid{ min-width:0; } .stMid>b{ font-size:13.5px; font-weight:600; display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .stSub{ font-size:11.5px; color:var(--mut); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block; }
+.stTag{ display:inline-block; color:var(--ink); background:var(--bg2); border:1px solid var(--line2); border-radius:5px; padding:0 6px; margin-right:6px; font-size:10.5px; font-weight:600; }
 .stAmt{ font-size:14px; font-weight:700; color:var(--ink); font-variant-numeric:tabular-nums; }
 .stAmt.pos{ color:var(--win); }
 .ledgerMore{ display:block; width:100%; margin-top:14px; font:inherit; font-size:13px; font-weight:700; color:var(--ac); background:transparent; border:1px dashed var(--line2); border-radius:10px; padding:12px; cursor:pointer; }
