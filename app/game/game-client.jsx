@@ -112,8 +112,15 @@ function ResetDialog({ entity, onClose }) {
 /* ===================================================================== */
 const PROV = {
   statement: { label: "Statement", cls: "pvStatement" },
+  forecast: { label: "Forecast", cls: "pvForecast" },
   reconstructed: { label: "Reconstructed", cls: "pvRecon" },
+  book: { label: "Book", cls: "pvBook" },
   correction: { label: "Correction", cls: "pvCorr" },
+};
+const PROV_NOTE = {
+  reconstructed: "These lines were entered during cleanup to balance the books — your judgment, not a bank record. Confirm the ones that are right; flag any to revisit.",
+  forecast: "Scheduled or expected entries dated ahead — projections of what's due, not money that has moved yet.",
+  book: "Valuations and reclassifications (holdings marked to value, receivable/loan reclasses) — internal book entries, not bank/card statement lines.",
 };
 function Ledger({ entity }) {
   const [month, setMonth] = useState("");   // '' = all months
@@ -153,7 +160,7 @@ function Ledger({ entity }) {
   };
 
   const MONTHS = monthOptions();
-  const VIEWS = [["all", "All"], ["statement", "Statement"], ["reconstructed", "Reconstructed"]];
+  const VIEWS = [["all", "All"], ["statement", "Statement"], ["forecast", "Forecast"], ["reconstructed", "Reconstructed"], ["book", "Book"]];
   return (
     <div className={s.ledger}>
       <div className={s.provSeg}>
@@ -161,7 +168,7 @@ function Ledger({ entity }) {
           <button key={id} className={prov === id ? s.provOn : s.provBtn} onClick={() => setProv(id)}>{label}</button>
         ))}
       </div>
-      {reviewing && <div className={s.reviewNote}>These {total} lines were entered during cleanup to balance the books — your judgment, not a bank record. Confirm the ones that are right; flag any to revisit.</div>}
+      {PROV_NOTE[prov] && <div className={s.reviewNote}>{PROV_NOTE[prov]}</div>}
       <div className={s.ledgerBar}>
         <input className={s.ledgerSearch} placeholder="Search description…" value={text} onChange={(e) => setText(e.target.value)} />
         <select className={s.ledgerMonth} value={month} onChange={(e) => setMonth(e.target.value)}>

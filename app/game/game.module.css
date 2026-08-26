@@ -495,7 +495,7 @@
 @media (max-width:760px){ .stRow{ grid-template-columns:70px 1fr auto; } .ledgerCount{ margin-left:0; } }
 
 /* provenance: view segmented control + badges + review lane */
-.provSeg{ display:inline-flex; background:var(--panel); border:1px solid var(--line2); border-radius:11px; padding:3px; margin-bottom:12px; }
+.provSeg{ display:inline-flex; flex-wrap:wrap; background:var(--panel); border:1px solid var(--line2); border-radius:11px; padding:3px; margin-bottom:12px; }
 .provBtn,.provOn{ font:inherit; font-size:13px; font-weight:600; color:var(--mut); border:0; background:transparent; padding:7px 15px; border-radius:8px; cursor:pointer; }
 .provOn{ background:var(--ink); color:var(--bg); }
 .reviewNote{ font-size:12.5px; color:var(--mut); line-height:1.55; background:color-mix(in srgb,var(--gold) 8%,var(--panel)); border:1px solid color-mix(in srgb,var(--gold) 28%,transparent); border-radius:11px; padding:11px 14px; margin-bottom:12px; }
@@ -503,7 +503,9 @@
 .stTitle>b{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .pv{ flex-shrink:0; font-size:9.5px; font-weight:800; text-transform:uppercase; letter-spacing:.04em; border-radius:5px; padding:2px 6px; }
 .pvStatement{ background:var(--bg2); color:var(--mut); border:1px solid var(--line2); }
+.pvForecast{ background:color-mix(in srgb,#5b9be5 20%,transparent); color:#7db2f0; }
 .pvRecon{ background:color-mix(in srgb,var(--gold) 16%,transparent); color:var(--gold); }
+.pvBook{ background:color-mix(in srgb,#35d0c4 16%,transparent); color:#4fd6cb; }
 .pvCorr{ background:color-mix(in srgb,#a988ff 18%,transparent); color:#c3adff; }
 .stReview{ display:flex; align-items:center; gap:6px; }
 .rvOk{ font-size:11px; font-weight:700; color:var(--win); } .rvFlag{ font-size:11px; font-weight:700; color:var(--gold); }
