@@ -427,3 +427,31 @@
   .mCol[data-align="right"]{ text-align:left; } .mCol[data-align="right"] .mNodeTop{ flex-direction:row; } .mCol[data-align="right"] .mNodeBar{ justify-content:flex-start; }
   .scorecard{ grid-template-columns:repeat(2,1fr); }
 }
+
+/* ============================================================= */
+/* ============  THE FOUR QUADRANTS — cashflow board  ========= */
+/* ============================================================= */
+.quads{ margin-top:12px; background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:14px 16px; }
+.quadsGrid{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.quad{ background:var(--bg2); border:1px solid var(--line2); border-radius:12px; padding:11px 13px; position:relative; overflow:hidden; }
+.quad::before{ content:""; position:absolute; inset:0 auto 0 0; width:3px; }
+.q_fixed_in::before,.q_var_in::before{ background:var(--win); }
+.q_fixed_out::before{ background:var(--gold); } .q_var_out::before{ background:var(--mut2); }
+.quadLabel{ font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--mut); font-weight:700; }
+.quadNums{ display:flex; align-items:baseline; gap:7px; margin:5px 0 7px; font-variant-numeric:tabular-nums; }
+.quadPlan{ font-size:12.5px; color:var(--faint); }
+.quadArrow{ color:var(--faint); font-size:12px; }
+.quadNums b{ font-size:18px; font-weight:800; }
+.quadBar{ height:6px; border-radius:4px; background:#0c0e13; overflow:hidden; }
+.quadBar>div{ height:100%; border-radius:4px; transition:width .5s; }
+.fill_good{ background:var(--win); } .fill_bad{ background:var(--lose); } .fill_flat{ background:var(--mut2); }
+.quadDelta{ font-size:11px; font-weight:600; margin-top:6px; font-variant-numeric:tabular-nums; }
+.d_good{ color:var(--win); } .d_bad{ color:var(--lose); } .d_flat{ color:var(--mut); }
+.quadsFoot{ display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px; }
+.netBox,.workBox{ display:flex; align-items:center; justify-content:space-between; gap:10px; background:var(--panel2); border:1px solid var(--line2); border-radius:11px; padding:11px 14px; }
+.netBox>span,.workBox>span{ font-size:12px; color:var(--mut); font-weight:700; text-transform:uppercase; letter-spacing:.04em; }
+.workBox>span{ text-transform:none; letter-spacing:0; font-weight:600; }
+.workBox em{ display:block; font-style:normal; font-size:10.5px; color:var(--faint); text-transform:none; }
+.netNums{ display:flex; align-items:baseline; gap:9px; font-variant-numeric:tabular-nums; }
+.netNums b{ font-size:18px; font-weight:800; } .workBox>b{ font-size:16px; font-weight:800; color:#c3adff; font-variant-numeric:tabular-nums; }
+@media (max-width:760px){ .quadsFoot{ grid-template-columns:1fr; } }

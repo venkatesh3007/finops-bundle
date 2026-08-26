@@ -280,6 +280,9 @@ function MonthBoard({ entity, month, onChanged }) {
     <div className={s.board}>
       <BoardHead board={board} onLock={lock} busy={busy} />
 
+      {/* the four-quadrant cashflow board, reconciled: plan → reality */}
+      {board.buckets && <Quadrants b={board.buckets} />}
+
       {/* the auto-matched reel — collapsed by default (never the raw pile) */}
       <button className={s.autoBar} onClick={() => setExpand((x) => !x)}>
         <span className={s.autoTick}>✓</span>
@@ -317,6 +320,47 @@ function MonthBoard({ entity, month, onChanged }) {
       )}
 
       {payoff && <LockSeal payoff={payoff} month={month} onClose={() => setPayoff(null)} />}
+    </div>
+  );
+}
+
+/* the four quadrants — Fixed/Variable × In/Out (personal), Work kept apart.
+   plan → reality, with the delta as the story. This IS the cashflow board. */
+function Quadrants({ b }) {
+  const Cell = (key, label, x, dir) => {
+    const over = x.delta > 0, under = x.delta < 0;
+    // inflow: over is good (green), short is red. outflow: over is caution (red), under is good (green).
+    const tone = x.delta === 0 ? "flat" : dir === "in" ? (over ? "good" : "bad") : (over ? "bad" : "good");
+    const fill = x.planned > 0 ? Math.min(100, Math.round((x.actual / x.planned) * 100)) : (x.actual > 0 ? 100 : 0);
+    return (
+      <div className={`${s.quad} ${s["q_" + key]}`} key={key}>
+        <div className={s.quadLabel}>{label}</div>
+        <div className={s.quadNums}><span className={s.quadPlan}>{compact(x.planned)}</span><span className={s.quadArrow}>→</span><b>{compact(x.actual)}</b></div>
+        <div className={s.quadBar}><div className={s["fill_" + tone]} style={{ width: fill + "%" }} /></div>
+        {x.delta !== 0 && <div className={`${s.quadDelta} ${s["d_" + tone]}`}>{over ? "+" : ""}{compact(x.delta)} {dir === "in" ? (over ? "more in" : "short") : (over ? "over" : "under")}</div>}
+      </div>
+    );
+  };
+  return (
+    <div className={s.quads}>
+      <div className={s.quadsGrid}>
+        {Cell("fixed_in", "Fixed inflow", b.fixed_in, "in")}
+        {Cell("var_in", "Variable inflow", b.var_in, "in")}
+        {Cell("fixed_out", "Fixed outflow", b.fixed_out, "out")}
+        {Cell("var_out", "Variable outflow", b.var_out, "out")}
+      </div>
+      <div className={s.quadsFoot}>
+        <div className={s.netBox}>
+          <span>Net</span>
+          <div className={s.netNums}><span className={s.quadPlan}>plan {compact(b.net.planned)}</span><b className={b.net.actual >= 0 ? s.pos : s.neg}>{compact(b.net.actual)}</b></div>
+        </div>
+        {b.work.actual > 0 && (
+          <div className={s.workBox}>
+            <span>Work · reimbursable <em>separate from your cashflow</em></span>
+            <b>{compact(b.work.actual)}</b>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
