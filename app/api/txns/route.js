@@ -44,9 +44,11 @@ export async function GET(req) {
       // leg), newest first. Month + text filters, paginated. This is the full pile
       // the game hides — available on demand when you need to see everything.
       if (q.month) where.push(`to_char(t.date,'YYYY-MM') = ${P(q.month)}`);
-      // "flows only" — drop internal bookkeeping (household side, clearing, equity,
-      // corrections) so what's left is the actual bank/card statement movement.
-      if (q.flows) where.push(`a.name not like 'Assets:Household%' and a.name not like 'Assets:Clearing%' and a.name not like 'Equity:%'`);
+      // "flows only" — drop whole transactions that are internal bookkeeping (any leg
+      // on the household side, clearing, or equity) so what's left is real bank/card
+      // statement movement. Must exclude the TRANSACTION, not just the leg.
+      if (q.flows) where.push(`not exists (select 1 from postings pf join accounts af on af.id=pf.account_id
+        where pf.transaction_id=t.id and (af.name like 'Assets:Household%' or af.name like 'Assets:Clearing%' or af.name like 'Equity:%'))`);
       const offset = Math.max(0, Number(q.offset) || 0);
       const c = await query(
         `select count(distinct t.id) n from transactions t
