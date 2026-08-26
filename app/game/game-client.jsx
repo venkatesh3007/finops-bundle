@@ -30,31 +30,147 @@ const THEMES = [
 /* ---------- root ---------- */
 export default function GameClient({ entity = "personal" }) {
   const [theme, setTheme] = useState("climb");
-  const [tab, setTab] = useState("play"); // play (the board) | status (the meters)
+  const [tab, setTab] = useState("play"); // play | world | statement | status
+  const [resetting, setResetting] = useState(false);
   const ac = THEMES.find((t) => t.id === theme).ac;
+
+  const TABS = [["play", "Play"], ["world", "World"], ["statement", "Statement"], ["status", "Status"]];
 
   return (
     <div className={s.app} data-theme={theme} style={{ "--ac": ac }}>
       <div className={s.top}>
         <div className={s.brand}>finops<span style={{ color: ac }}>·</span>play</div>
         <div className={s.tabs}>
-          <button className={tab === "play" ? s.tabOn : s.tab} onClick={() => setTab("play")}>Play</button>
-          <button className={tab === "world" ? s.tabOn : s.tab} onClick={() => setTab("world")}>World</button>
-          <button className={tab === "status" ? s.tabOn : s.tab} onClick={() => setTab("status")}>Status</button>
-        </div>
-        <div className={s.themeDots}>
-          {THEMES.map((t) => (
-            <button key={t.id} title={t.name} className={theme === t.id ? s.dotOn : s.dot}
-              onClick={() => setTheme(t.id)} style={{ "--d": t.ac }} />
+          {TABS.map(([id, label]) => (
+            <button key={id} className={tab === id ? s.tabOn : s.tab} onClick={() => setTab(id)}>{label}</button>
           ))}
+        </div>
+        <div className={s.topRight}>
+          <button className={s.resetBtn} title="Reset game progress" onClick={() => setResetting(true)}>⟳</button>
+          <div className={s.themeDots}>
+            {THEMES.map((t) => (
+              <button key={t.id} title={t.name} className={theme === t.id ? s.dotOn : s.dot}
+                onClick={() => setTheme(t.id)} style={{ "--d": t.ac }} />
+            ))}
+          </div>
         </div>
       </div>
 
       {tab === "play" ? <Play entity={entity} />
         : tab === "world" ? <World entity={entity} />
+        : tab === "statement" ? <Ledger entity={entity} />
         : <Status entity={entity} theme={theme} />}
+
+      {resetting && <ResetDialog entity={entity} onClose={() => setResetting(false)} />}
     </div>
   );
+}
+
+/* Reset — clears game progress (unlocks months, clears matches & decisions),
+   leaves the books and plan intact. Two-step confirm; reloads on success. */
+function ResetDialog({ entity, onClose }) {
+  const [busy, setBusy] = useState(false);
+  const [alsoQuests, setAlsoQuests] = useState(false);
+  const [done, setDone] = useState(null);
+  const go = async () => {
+    setBusy(true);
+    try {
+      const j = await (await fetch("/api/game/reset", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ entity, quests: alsoQuests }) })).json();
+      if (j.error) { setBusy(false); return; }
+      setDone(j.reset);
+      setTimeout(() => window.location.reload(), 1100);
+    } catch { setBusy(false); }
+  };
+  return (
+    <div className={s.sealOverlay} onClick={busy ? undefined : onClose}>
+      <div className={s.resetCard} onClick={(e) => e.stopPropagation()}>
+        {done ? (
+          <>
+            <div className={s.resetTick}>⟳</div>
+            <b>Game reset</b>
+            <span className={s.resetSub}>{done.months_unlocked} months unlocked · {done.matches_cleared} matches & {done.decisions_cleared} decisions cleared. Reloading…</span>
+          </>
+        ) : (
+          <>
+            <div className={s.resetIcon}>⟳</div>
+            <b>Reset the game?</b>
+            <span className={s.resetSub}>Unlocks every month and clears your matches, rulings, and accept/defer decisions so you can replay. <strong>Your books and your plan stay intact.</strong> Corrections already posted to the ledger can't be undone.</span>
+            <label className={s.resetChk}><input type="checkbox" checked={alsoQuests} onChange={(e) => setAlsoQuests(e.target.checked)} /> also reopen resolved quests</label>
+            <div className={s.resetActs}>
+              <button className={s.resetCancel} disabled={busy} onClick={onClose}>Cancel</button>
+              <button className={s.resetGo} disabled={busy} onClick={go}>{busy ? "Resetting…" : "Reset game"}</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ===================================================================== */
+/* ==================  STATEMENT — every line, on demand  ============== */
+/* ===================================================================== */
+function Ledger({ entity }) {
+  const [month, setMonth] = useState("");   // '' = all months
+  const [text, setText] = useState("");
+  const [flows, setFlows] = useState(false);
+  const [rows, setRows] = useState(null);
+  const [total, setTotal] = useState(0);
+  const [offset, setOffset] = useState(0);
+  const PAGE = 60;
+
+  const load = useCallback(async (reset) => {
+    const off = reset ? 0 : offset;
+    const p = new URLSearchParams({ entity, all: "1", limit: String(PAGE), offset: String(off) });
+    if (month) p.set("month", month);
+    if (text.trim()) p.set("text", text.trim());
+    if (flows) p.set("flows", "1");
+    const j = await (await fetch(`/api/txns?${p}`)).json();
+    setTotal(j.total || 0);
+    setRows((prev) => (reset || !prev) ? (j.txns || []) : [...prev, ...(j.txns || [])]);
+    setOffset(off + (j.txns?.length || 0));
+  }, [entity, month, text, flows, offset]);
+
+  // reload from top whenever a filter changes
+  useEffect(() => { setRows(null); setOffset(0); load(true); /* eslint-disable-next-line */ }, [entity, month, text, flows]);
+
+  const MONTHS = monthOptions();
+  return (
+    <div className={s.ledger}>
+      <div className={s.ledgerBar}>
+        <input className={s.ledgerSearch} placeholder="Search description…" value={text} onChange={(e) => setText(e.target.value)} />
+        <select className={s.ledgerMonth} value={month} onChange={(e) => setMonth(e.target.value)}>
+          <option value="">All months</option>
+          {MONTHS.map((m) => <option key={m} value={m}>{monLong(m)}</option>)}
+        </select>
+        <label className={s.ledgerToggle}><input type="checkbox" checked={flows} onChange={(e) => setFlows(e.target.checked)} /> Hide internal transfers</label>
+        <span className={s.ledgerCount}>{total.toLocaleString("en-IN")} lines</span>
+      </div>
+      {!rows ? <div className={s.loading}>Loading the statement…</div> : (
+        <>
+          <div className={s.ledgerList}>
+            {rows.map((r) => (
+              <div className={s.stRow} key={r.id}>
+                <span className={s.stDate}>{r.date}</span>
+                <div className={s.stMid}>
+                  <b>{r.payee || r.narration || "(no description)"}</b>
+                  <span className={s.stSub}>{leaf(r.account)}{r.statement ? ` · via ${r.statement}` : ""}{r.doc ? ` · 📄 ${docName(r.doc)}` : ""}</span>
+                </div>
+                <span className={`${s.stAmt} ${r.amount < 0 ? s.pos : ""}`}>{inr(Math.abs(r.amount))}</span>
+              </div>
+            ))}
+            {!rows.length && <div className={s.liE}>No lines match.</div>}
+          </div>
+          {rows.length < total && <button className={s.ledgerMore} onClick={() => load(false)}>Load more ({total - rows.length} left)</button>}
+        </>
+      )}
+    </div>
+  );
+}
+function monthOptions() {
+  const out = [];
+  for (let y = 2026, m = 8; !(y === 2025 && m === 3); ) { out.push(`${y}-${pad(m)}`); m--; if (m < 1) { m = 12; y--; } if (y < 2025) break; }
+  return out;
 }
 
 /* ===================================================================== */

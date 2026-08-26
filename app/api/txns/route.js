@@ -38,8 +38,30 @@ export async function GET(req) {
        left join vettings v on v.transaction_id=t.id
        left join decisions d on d.entity_id=t.entity_id and d.key='payee:'||t.payee`;
 
-    let rows, pile = null;
-    if (q.queue) {
+    let rows, pile = null, total = null;
+    if (q.all) {
+      // THE STATEMENT — every line, one row per transaction (its primary economic
+      // leg), newest first. Month + text filters, paginated. This is the full pile
+      // the game hides — available on demand when you need to see everything.
+      if (q.month) where.push(`to_char(t.date,'YYYY-MM') = ${P(q.month)}`);
+      // "flows only" — drop internal bookkeeping (household side, clearing, equity,
+      // corrections) so what's left is the actual bank/card statement movement.
+      if (q.flows) where.push(`a.name not like 'Assets:Household%' and a.name not like 'Assets:Clearing%' and a.name not like 'Equity:%'`);
+      const offset = Math.max(0, Number(q.offset) || 0);
+      const c = await query(
+        `select count(distinct t.id) n from transactions t
+           join postings p on p.transaction_id=t.id join accounts a on a.id=p.account_id
+          where ${where.join(" and ")}`, params);
+      total = Number(c[0].n);
+      rows = await query(
+        `select * from (
+           select distinct on (t.id) ${cols} ${joins} where ${where.join(" and ")}
+           order by t.id,
+             (case when a.name like 'Assets:Bank:%' or a.name like 'Assets:Cash%' or a.name like 'Liabilities:Card:%' then 2
+                   when a.name like 'Equity:%' then 3 else 0 end),
+             abs(p.amount) desc
+         ) q order by q.date desc, abs(q.amount) desc limit ${limit} offset ${offset}`, params);
+    } else if (q.queue) {
       // one card per transaction — its Expenses:Other (or flagged) leg — not yet sorted/deferred.
       where.push(`a.name like 'Expenses:Other%'`);
       where.push(`coalesce(v.status,'unvetted') not in ('ok','review')`);
@@ -62,7 +84,7 @@ export async function GET(req) {
     }
 
     return Response.json({
-      pile,
+      pile, total,
       txns: rows.map((r) => ({
         id: r.id, date: r.date, payee: r.payee, narration: r.narration || "",
         // where the line came from: the funding bank/card (statement) + the source doc.

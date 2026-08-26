@@ -455,3 +455,40 @@
 .netNums{ display:flex; align-items:baseline; gap:9px; font-variant-numeric:tabular-nums; }
 .netNums b{ font-size:18px; font-weight:800; } .workBox>b{ font-size:16px; font-weight:800; color:#c3adff; font-variant-numeric:tabular-nums; }
 @media (max-width:760px){ .quadsFoot{ grid-template-columns:1fr; } }
+
+/* ============================================================= */
+/* ==============  STATEMENT view + RESET control  ============ */
+/* ============================================================= */
+.topRight{ display:inline-flex; align-items:center; gap:12px; }
+.resetBtn{ font:inherit; font-size:15px; width:32px; height:32px; border-radius:9px; border:1px solid var(--line2); background:var(--panel); color:var(--mut); cursor:pointer; }
+.resetBtn:hover{ color:var(--ink); border-color:var(--ac); }
+
+/* reset dialog (reuses .sealOverlay) */
+.resetCard{ text-align:center; background:linear-gradient(180deg,var(--panel),var(--panel2)); border:1px solid var(--line2); border-radius:18px; padding:28px 30px; max-width:400px; box-shadow:0 30px 80px rgba(0,0,0,.6); }
+.resetIcon,.resetTick{ font-size:34px; color:var(--ac); }
+.resetTick{ animation:spin 1s linear; }
+.resetCard b{ display:block; font-size:18px; margin:10px 0 8px; }
+.resetSub{ display:block; font-size:13px; color:var(--mut); line-height:1.55; } .resetSub strong{ color:var(--ink); }
+.resetChk{ display:flex; align-items:center; justify-content:center; gap:7px; font-size:12.5px; color:var(--mut); margin:14px 0 4px; cursor:pointer; }
+.resetActs{ display:flex; gap:10px; justify-content:center; margin-top:18px; }
+.resetCancel{ font:inherit; font-size:13.5px; font-weight:700; color:var(--ink); background:var(--bg2); border:1px solid var(--line2); border-radius:10px; padding:11px 20px; cursor:pointer; }
+.resetGo{ font:inherit; font-size:13.5px; font-weight:800; color:#12121a; background:var(--lose); border:0; border-radius:10px; padding:11px 22px; cursor:pointer; }
+.resetGo:disabled,.resetCancel:disabled{ opacity:.5; }
+
+/* the ledger / statement */
+.ledger{ margin-top:16px; }
+.ledgerBar{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:12px; }
+.ledgerSearch{ flex:1; min-width:200px; font:inherit; font-size:13.5px; background:var(--panel); border:1px solid var(--line2); color:var(--ink); border-radius:10px; padding:10px 13px; }
+.ledgerMonth{ font:inherit; font-size:13px; background:var(--panel); border:1px solid var(--line2); color:var(--ink); border-radius:10px; padding:10px 12px; }
+.ledgerToggle{ display:inline-flex; align-items:center; gap:6px; font-size:12.5px; color:var(--mut); cursor:pointer; }
+.ledgerCount{ font-size:12.5px; color:var(--faint); font-variant-numeric:tabular-nums; margin-left:auto; }
+.ledgerList{ display:grid; }
+.stRow{ display:grid; grid-template-columns:92px 1fr auto; gap:12px; align-items:center; padding:10px 4px; border-bottom:1px solid var(--line); }
+.stDate{ font-size:12px; color:var(--faint); font-variant-numeric:tabular-nums; }
+.stMid{ min-width:0; } .stMid>b{ font-size:13.5px; font-weight:600; display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.stSub{ font-size:11.5px; color:var(--mut); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block; }
+.stAmt{ font-size:14px; font-weight:700; color:var(--ink); font-variant-numeric:tabular-nums; }
+.stAmt.pos{ color:var(--win); }
+.ledgerMore{ display:block; width:100%; margin-top:14px; font:inherit; font-size:13px; font-weight:700; color:var(--ac); background:transparent; border:1px dashed var(--line2); border-radius:10px; padding:12px; cursor:pointer; }
+
+@media (max-width:760px){ .stRow{ grid-template-columns:70px 1fr auto; } .ledgerCount{ margin-left:0; } }
