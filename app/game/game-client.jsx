@@ -201,6 +201,7 @@ function Play({ entity }) {
 function SeasonStrip({ season, fy, setFy, month, setMonth }) {
   const locked = season.months.filter((m) => m.locked).length;
   const played = season.months.filter((m) => m.hasData).length;
+  const sc = season.scorecard;
   return (
     <div className={s.season}>
       <div className={s.seasonHead}>
@@ -211,6 +212,14 @@ function SeasonStrip({ season, fy, setFy, month, setMonth }) {
         </div>
         <button className={s.fyStep} onClick={() => setFy(fy + 1)} aria-label="next year">›</button>
       </div>
+      {sc && (sc.sealed > 0 || sc.bestStreak > 0) && (
+        <div className={s.scorecard}>
+          <div className={s.scCell}><b>{sc.sealed}</b><span>sealed</span></div>
+          <div className={s.scCell}><b>{sc.avgCoverage != null ? sc.avgCoverage + "%" : "—"}</b><span>avg match</span></div>
+          <div className={s.scCell}><b>{sc.exceptionsHandled}</b><span>calls made</span></div>
+          <div className={s.scCell}><b>🔥 {sc.currentStreak}</b><span>streak · best {sc.bestStreak}</span></div>
+        </div>
+      )}
       <div className={s.monthRow}>
         {season.months.map((m) => {
           const state = !m.hasData ? "empty" : m.locked ? "locked" : m.hasPlan ? "open" : "nodata";
@@ -483,6 +492,7 @@ function Status({ entity, theme }) {
   const range = useMemo(() => statusRange(kind, anchor[kind]), [kind, anchor]);
   const [data, setData] = useState(null);
   const [ventures, setVentures] = useState([]);
+  const [altitude, setAltitude] = useState(null);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
 
@@ -491,8 +501,12 @@ function Status({ entity, theme }) {
     const j = await r.json();
     if (j.error) { setToast(j.error); return; }
     setData(j);
-    const v = await (await fetch(`/api/ventures?entity=${entity}`)).json();
+    const [v, a] = await Promise.all([
+      (await fetch(`/api/ventures?entity=${entity}`)).json(),
+      (await fetch(`/api/game/altitude?entity=${entity}&from=${range.from}&to=${range.to}`)).json(),
+    ]);
     setVentures(v.ventures || []);
+    setAltitude(a.error ? null : a);
   }, [entity, range.from, range.to]);
   useEffect(() => { setData(null); load(); }, [load]);
 
@@ -525,7 +539,9 @@ function Status({ entity, theme }) {
           <button onClick={() => step(1)} aria-label="next">›</button>
         </div>
       </div>
+      {altitude && <Altitude a={altitude} />}
       <Hero st={st} range={range} />
+      <MachineMap m={st.machine} />
       <div className={s.detail}>
         <div className={s.grid2}>
           <Statement st={st} />
@@ -623,6 +639,75 @@ function Leverage({ d, tint }) {
     </div>
   );
 }
+/* CLIMB — the composite altitude (freedom·debt·runway·streak) */
+function Altitude({ a }) {
+  const R = 34, C = 2 * Math.PI * R, off = C * (1 - a.altitude / 100);
+  return (
+    <div className={s.alt}>
+      <div className={s.altDial}>
+        <svg viewBox="0 0 80 80" className={s.altSvg}>
+          <circle cx="40" cy="40" r={R} className={s.altTrack} />
+          <circle cx="40" cy="40" r={R} className={s.altFill} strokeDasharray={C} strokeDashoffset={off} transform="rotate(-90 40 40)" />
+        </svg>
+        <div className={s.altNum}><b>{a.altitude}</b><span>altitude</span></div>
+      </div>
+      <div className={s.altDims}>
+        {a.dims.map((d) => (
+          <div className={s.altDim} key={d.key}>
+            <div className={s.altDimTop}><span>{d.label}</span><b>{d.score}</b><i>×{d.weight}</i></div>
+            <div className={s.altBar}><div style={{ width: Math.max(2, d.score) + "%" }} /></div>
+            <div className={s.altDetail}>{d.detail}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* THE MACHINE — where the month's money flows: sources → engine → sinks */
+function MachineMap({ m }) {
+  if (!m) return null;
+  const sources = [
+    { k: "active", label: "Active income", v: m.inflow.active, c: "#5b9be5" },
+    { k: "passive", label: "Passive", v: m.inflow.passive, c: "var(--win)" },
+    { k: "capital", label: "Capital raised", v: m.inflow.capital, c: "var(--gold)" },
+  ].filter((x) => x.v > 0);
+  const sinks = [
+    { k: "fixed", label: "Fixed", v: m.sinks.fixed, c: "var(--gold)" },
+    { k: "variable", label: "Variable", v: m.sinks.variable, c: "var(--mut)" },
+    { k: "savings", label: "Savings / invest", v: m.sinks.savings, c: "var(--win)" },
+    { k: "debt", label: "Debt service", v: m.sinks.debt, c: "var(--lose)" },
+  ].filter((x) => x.v > 0);
+  const maxV = Math.max(1, ...sources.map((x) => x.v), ...sinks.map((x) => x.v));
+  const bar = (v) => Math.max(6, Math.round((v / maxV) * 100));
+  const Col = (title, rows, align) => (
+    <div className={s.mCol} data-align={align}>
+      <div className={s.mColH}>{title}</div>
+      {rows.map((r) => (
+        <div className={s.mNode} key={r.k}>
+          <div className={s.mNodeTop}><span>{r.label}</span><b>{compact(r.v)}</b></div>
+          <div className={s.mNodeBar}><div style={{ width: bar(r.v) + "%", background: r.c }} /></div>
+        </div>
+      ))}
+      {!rows.length && <div className={s.liE}>—</div>}
+    </div>
+  );
+  return (
+    <div className={s.machine}>
+      <div className={s.machineH}>The machine <span className={s.hint}>how this period's money moved</span></div>
+      <div className={s.machineFlow}>
+        {Col("In", sources, "right")}
+        <div className={s.mEngine}>
+          <div className={s.mGear}>⚙</div>
+          <div className={s.mThru}>{compact(m.inflow.total)}<span>through</span></div>
+          <div className={m.surplus >= 0 ? s.mSurplus : s.mDeficit}>{m.surplus >= 0 ? "+" : ""}{compact(m.surplus)} <em>{m.surplus >= 0 ? "surplus" : "deficit"}</em></div>
+        </div>
+        {Col("Out", sinks, "left")}
+      </div>
+    </div>
+  );
+}
+
 function Statement({ st }) {
   const G = (label, cls, total, rows) => (
     <div className={s.grp}><div className={`${s.grpH} ${cls}`}><span>{label}</span><span>{inr(total)}</span></div>
