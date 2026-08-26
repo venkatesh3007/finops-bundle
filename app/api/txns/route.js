@@ -27,6 +27,7 @@ export async function GET(req) {
     const limit = Math.min(500, Number(q.limit) || 60);
 
     const cols = `t.id, to_char(t.date,'YYYY-MM-DD') as date, t.payee, t.narration, t.source_file,
+                  t.corrects_id, (t.metadata->>'entered_by') as entered_by,
                   a.name as account, p.amount, coalesce(v.status,'unvetted') as status, d.decision as suggestion,
                   (select a2.name from postings p2 join accounts a2 on a2.id=p2.account_id
                      where p2.transaction_id=t.id
@@ -49,6 +50,11 @@ export async function GET(req) {
       // statement movement. Must exclude the TRANSACTION, not just the leg.
       if (q.flows) where.push(`not exists (select 1 from postings pf join accounts af on af.id=pf.account_id
         where pf.transaction_id=t.id and (af.name like 'Assets:Household%' or af.name like 'Assets:Clearing%' or af.name like 'Equity:%'))`);
+      // provenance lens: statement (real bank/card line) vs reconstructed (entered
+      // during cleanup — metadata.entered_by). Corrections are excluded by the base
+      // where (corrects_id is null), so reconstructions are entered_by-set entries.
+      if (q.prov === "reconstructed") where.push(`(t.metadata->>'entered_by') is not null`);
+      else if (q.prov === "statement") where.push(`(t.metadata->>'entered_by') is null`);
       const offset = Math.max(0, Number(q.offset) || 0);
       const c = await query(
         `select count(distinct t.id) n from transactions t
@@ -94,6 +100,9 @@ export async function GET(req) {
         doc: r.source_file || null,
         account: r.account, amount: Number(r.amount),
         status: r.status, suggestion: r.suggestion || null,
+        // provenance: what kind of line this is.
+        provenance: r.corrects_id ? "correction" : (r.entered_by ? "reconstructed" : "statement"),
+        hasDoc: !!(r.source_file && r.source_file.length),
       })),
     });
   } catch (e) { return Response.json({ error: String(e?.message || e) }, { status: 500 }); }

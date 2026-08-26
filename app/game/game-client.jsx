@@ -110,63 +110,100 @@ function ResetDialog({ entity, onClose }) {
 /* ===================================================================== */
 /* ==================  STATEMENT — every line, on demand  ============== */
 /* ===================================================================== */
+const PROV = {
+  statement: { label: "Statement", cls: "pvStatement" },
+  reconstructed: { label: "Reconstructed", cls: "pvRecon" },
+  correction: { label: "Correction", cls: "pvCorr" },
+};
 function Ledger({ entity }) {
   const [month, setMonth] = useState("");   // '' = all months
   const [text, setText] = useState("");
   const [flows, setFlows] = useState(true); // default: real bank/card statement lines (internal transfers hidden)
+  const [prov, setProv] = useState("all");  // all | statement | reconstructed
   const [rows, setRows] = useState(null);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
+  const [busy, setBusy] = useState(false);
   const PAGE = 60;
+  const reviewing = prov === "reconstructed";        // the review lane
+  const useFlows = flows && prov === "all";           // flows only makes sense on the mixed view
 
   const load = useCallback(async (reset) => {
     const off = reset ? 0 : offset;
     const p = new URLSearchParams({ entity, all: "1", limit: String(PAGE), offset: String(off) });
     if (month) p.set("month", month);
     if (text.trim()) p.set("text", text.trim());
-    if (flows) p.set("flows", "1");
+    if (useFlows) p.set("flows", "1");
+    if (prov !== "all") p.set("prov", prov);
     const j = await (await fetch(`/api/txns?${p}`)).json();
     setTotal(j.total || 0);
     setRows((prev) => (reset || !prev) ? (j.txns || []) : [...prev, ...(j.txns || [])]);
     setOffset(off + (j.txns?.length || 0));
-  }, [entity, month, text, flows, offset]);
+  }, [entity, month, text, useFlows, prov, offset]);
 
   // reload from top whenever a filter changes
-  useEffect(() => { setRows(null); setOffset(0); load(true); /* eslint-disable-next-line */ }, [entity, month, text, flows]);
+  useEffect(() => { setRows(null); setOffset(0); load(true); /* eslint-disable-next-line */ }, [entity, month, text, useFlows, prov]);
+
+  const review = async (id, action) => {
+    setBusy(true);
+    try {
+      await fetch("/api/game/card", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ entity, action, txnId: id }) });
+      setRows((rs) => rs.map((r) => r.id === id ? { ...r, status: action === "accept" ? "ok" : "review" } : r));
+    } finally { setBusy(false); }
+  };
 
   const MONTHS = monthOptions();
+  const VIEWS = [["all", "All"], ["statement", "Statement"], ["reconstructed", "Reconstructed"]];
   return (
     <div className={s.ledger}>
+      <div className={s.provSeg}>
+        {VIEWS.map(([id, label]) => (
+          <button key={id} className={prov === id ? s.provOn : s.provBtn} onClick={() => setProv(id)}>{label}</button>
+        ))}
+      </div>
+      {reviewing && <div className={s.reviewNote}>These {total} lines were entered during cleanup to balance the books — your judgment, not a bank record. Confirm the ones that are right; flag any to revisit.</div>}
       <div className={s.ledgerBar}>
         <input className={s.ledgerSearch} placeholder="Search description…" value={text} onChange={(e) => setText(e.target.value)} />
         <select className={s.ledgerMonth} value={month} onChange={(e) => setMonth(e.target.value)}>
           <option value="">All months</option>
           {MONTHS.map((m) => <option key={m} value={m}>{monLong(m)}</option>)}
         </select>
-        <label className={s.ledgerToggle}><input type="checkbox" checked={flows} onChange={(e) => setFlows(e.target.checked)} /> Hide internal transfers</label>
+        {prov === "all" && <label className={s.ledgerToggle}><input type="checkbox" checked={flows} onChange={(e) => setFlows(e.target.checked)} /> Hide internal transfers</label>}
         <span className={s.ledgerCount}>{total.toLocaleString("en-IN")} lines</span>
       </div>
       {!rows ? <div className={s.loading}>Loading the statement…</div> : (
         <>
           <div className={s.ledgerList}>
             {rows.map((r) => {
-              // The raw bank-statement line lives in narration (e.g. "UPI/…/BILVA
-              // CHITS"); payee is often just the bank/counterparty. Show the real
-              // description first, the counterparty as a tag.
+              // The raw bank-statement line lives in narration; payee is often just the
+              // bank/counterparty. Show the real description first, the counterparty as a tag.
               const narr = (r.narration || "").trim();
               const desc = narr || r.payee || "(no description)";
               const tag = narr && r.payee && r.payee.trim() ? r.payee.trim() : null;
+              const pv = PROV[r.provenance] || PROV.statement;
+              const reviewed = r.status === "ok" ? "confirmed" : r.status === "review" ? "flagged" : null;
               return (
                 <div className={s.stRow} key={r.id}>
                   <span className={s.stDate}>{r.date}</span>
                   <div className={s.stMid}>
-                    <b title={desc}>{desc}</b>
+                    <div className={s.stTitle}>
+                      <span className={`${s.pv} ${s[pv.cls]}`} title={r.provenance === "reconstructed" ? "entered during cleanup" : r.hasDoc ? "from a statement, document attached" : "from a bank/card statement"}>{pv.label}{r.hasDoc ? " 📄" : ""}</span>
+                      <b title={desc}>{desc}</b>
+                    </div>
                     <span className={s.stSub}>
                       {tag && <span className={s.stTag}>{tag}</span>}
                       {leaf(r.account)}{r.statement ? ` · via ${r.statement}` : ""}{r.doc ? ` · 📄 ${docName(r.doc)}` : ""}
                     </span>
                   </div>
-                  <span className={`${s.stAmt} ${r.amount < 0 ? s.pos : ""}`}>{inr(Math.abs(r.amount))}</span>
+                  {reviewing ? (
+                    <div className={s.stReview}>
+                      {reviewed ? <span className={reviewed === "confirmed" ? s.rvOk : s.rvFlag}>{reviewed === "confirmed" ? "✓ confirmed" : "⚑ flagged"}</span> : null}
+                      <button className={s.rvBtn} disabled={busy} title="confirm" onClick={() => review(r.id, "accept")}>✓</button>
+                      <button className={s.rvBtnF} disabled={busy} title="flag to revisit" onClick={() => review(r.id, "review")}>⚑</button>
+                    </div>
+                  ) : (
+                    <span className={`${s.stAmt} ${r.amount < 0 ? s.pos : ""}`}>{inr(Math.abs(r.amount))}</span>
+                  )}
                 </div>
               );
             })}
