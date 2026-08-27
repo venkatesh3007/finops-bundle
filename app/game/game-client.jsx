@@ -77,22 +77,45 @@ export default function GameClient({ entity = "personal" }) {
   );
 }
 
-// Small identity chip + sign-out for signed-in customers.
+// Small identity chip + account menu (start-over, sign-out) for signed-in customers.
 function AccountChip({ email }) {
   const [open, setOpen] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const btn = { width: "100%", padding: "7px 10px", borderRadius: 8, border: "1px solid var(--line,#2c313d)", background: "transparent", color: "var(--ink,#e7e9ee)", cursor: "pointer", fontSize: 13 };
+
+  async function startOver() {
+    setErr(""); setBusy(true);
+    try {
+      const j = await (await fetch("/api/onboard/reset", { method: "POST" })).json();
+      if (j.error) throw new Error(j.error);
+      location.reload();
+    } catch (e) { setErr(String(e.message || e)); setBusy(false); }
+  }
+
   return (
     <div style={{ position: "relative" }}>
-      <button className={s.dot} title={email} onClick={() => setOpen((v) => !v)}
+      <button className={s.dot} title={email} onClick={() => { setOpen((v) => !v); setConfirming(false); setErr(""); }}
         style={{ width: 26, height: 26, borderRadius: "50%", background: "var(--ac)", color: "#fff", fontWeight: 700, fontSize: 12, border: 0, cursor: "pointer" }}>
         {email[0].toUpperCase()}
       </button>
       {open && (
-        <div style={{ position: "absolute", right: 0, top: 32, background: "var(--panel2,#1b1f2a)", border: "1px solid var(--line,#2c313d)", borderRadius: 10, padding: 10, minWidth: 190, zIndex: 50, boxShadow: "0 8px 30px rgba(0,0,0,.4)" }}>
-          <div style={{ fontSize: 12, color: "var(--muted,#9aa0ad)", marginBottom: 8, wordBreak: "break-all" }}>{email}</div>
-          <button onClick={() => fetch("/api/auth/logout", { method: "POST" }).then(() => (location.href = "/login"))}
-            style={{ width: "100%", padding: "7px 10px", borderRadius: 8, border: "1px solid var(--line,#2c313d)", background: "transparent", color: "var(--ink,#e7e9ee)", cursor: "pointer", fontSize: 13 }}>
-            Sign out
-          </button>
+        <div style={{ position: "absolute", right: 0, top: 32, background: "var(--panel2,#1b1f2a)", border: "1px solid var(--line,#2c313d)", borderRadius: 10, padding: 10, minWidth: 220, zIndex: 50, boxShadow: "0 8px 30px rgba(0,0,0,.4)" }}>
+          <div style={{ fontSize: 12, color: "var(--mut,#9aa0ad)", marginBottom: 8, wordBreak: "break-all" }}>{email}</div>
+          {!confirming ? (
+            <button onClick={() => setConfirming(true)} style={{ ...btn, marginBottom: 6 }}>Start over — clear my data</button>
+          ) : (
+            <div style={{ marginBottom: 6 }}>
+              <div style={{ fontSize: 12, color: "var(--lose,#ff8686)", lineHeight: 1.45, marginBottom: 6 }}>Delete every transaction in your warehouse and return to onboarding? This can’t be undone.</div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button disabled={busy} onClick={startOver} style={{ ...btn, flex: 1, border: "1px solid var(--lose,#ff5d6c)", color: "var(--lose,#ff8686)" }}>{busy ? "…" : "Yes, wipe it"}</button>
+                <button disabled={busy} onClick={() => setConfirming(false)} style={{ ...btn, flex: 1 }}>Cancel</button>
+              </div>
+            </div>
+          )}
+          {err && <div style={{ fontSize: 12, color: "var(--lose,#ff8686)", marginBottom: 6 }}>{err}</div>}
+          <button onClick={() => fetch("/api/auth/logout", { method: "POST" }).then(() => (location.href = "/login"))} style={btn}>Sign out</button>
         </div>
       )}
     </div>
