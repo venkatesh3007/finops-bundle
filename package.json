@@ -4,7 +4,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "NODE_ENV=production next build",
-    "start": "next start"
+    "start": "next start",
+    "postinstall": "node scripts/vendor.mjs"
   },
   "dependencies": {
     "next": "14.2.5",
@@ -12,6 +13,9 @@
     "react-dom": "18.3.1",
     "pg": "^8.23.0",
     "@simplewebauthn/server": "^13.1.1",
-    "@simplewebauthn/browser": "^13.1.0"
+    "@simplewebauthn/browser": "^13.1.0",
+    "@huggingface/transformers": "^4.2.0",
+    "pdfjs-dist": "^6.2.108",
+    "xlsx": "^0.18.5"
   }
 }

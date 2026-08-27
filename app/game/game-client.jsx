@@ -53,6 +53,7 @@ export default function GameClient({ entity = "personal" }) {
         </div>
         <div className={s.topRight}>
           {me?.caller?.email && <AccountChip email={me.caller.email} />}
+          {!needsOnboard && <a className={s.helpBtn} href="/import" title="Import a bank/card statement (parsed on-device)">⬆</a>}
           {!needsOnboard && <button className={s.helpBtn} title="How to play — replay the walkthrough" onClick={() => { setTab("play"); setHelp((h) => h + 1); }}>?</button>}
           {!needsOnboard && <button className={s.resetBtn} title="Reset game progress" onClick={() => setResetting(true)}>⟳</button>}
           <div className={s.themeDots}>
@@ -103,7 +104,6 @@ function AccountChip({ email }) {
 function Onboard({ caller }) {
   const [busy, setBusy] = useState("");
   const [err, setErr] = useState("");
-  const [preview, setPreview] = useState(null); // { count, sample } from a dry-run
 
   const name = (caller.name || caller.email || "there").split("@")[0];
 
@@ -111,28 +111,6 @@ function Onboard({ caller }) {
     setErr(""); setBusy("sample");
     try {
       const j = await (await fetch("/api/onboard/sample", { method: "POST" })).json();
-      if (j.error) throw new Error(j.error);
-      location.reload();
-    } catch (e) { setErr(String(e.message || e)); setBusy(""); }
-  }
-
-  async function onFile(e) {
-    setErr(""); setPreview(null);
-    const f = e.target.files?.[0]; if (!f) return;
-    const csv = await f.text();
-    setBusy("preview");
-    try {
-      const j = await (await fetch("/api/onboard/csv", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ csv, preview: true }) })).json();
-      if (j.error) throw new Error(j.error);
-      setPreview({ csv, count: j.count, sample: j.sample || [] });
-    } catch (e) { setErr(String(e.message || e)); }
-    setBusy("");
-  }
-
-  async function confirmImport() {
-    setErr(""); setBusy("import");
-    try {
-      const j = await (await fetch("/api/onboard/csv", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ csv: preview.csv }) })).json();
       if (j.error) throw new Error(j.error);
       location.reload();
     } catch (e) { setErr(String(e.message || e)); setBusy(""); }
@@ -157,26 +135,8 @@ function Onboard({ caller }) {
 
           <div className={s.obTile}>
             <div className={s.obTileTop}>📥 Your own statement</div>
-            <div className={s.obTileBody}>Upload a bank/card statement as CSV (date + amount, or debit/credit columns). Your real deliveries start stacking.</div>
-            {!preview ? (
-              <label className={s.obBtn} style={{ opacity: busy ? 0.6 : 1 }}>
-                {busy === "preview" ? "Reading…" : "Choose CSV file"}
-                <input type="file" accept=".csv,text/csv" style={{ display: "none" }} onChange={onFile} disabled={!!busy} />
-              </label>
-            ) : (
-              <div>
-                <div className={s.obPreview}>
-                  Found <b>{preview.count}</b> transactions.
-                  {preview.sample.slice(0, 3).map((r, i) => (
-                    <div key={i} className={s.obPvRow}><span>{r.date}</span><span className={s.obPvDesc}>{r.desc}</span><span>{r.amount < 0 ? "−" : "+"}₹{Math.abs(r.amount).toLocaleString("en-IN")}</span></div>
-                  ))}
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button className={s.obBtn} disabled={!!busy} onClick={confirmImport}>{busy === "import" ? "Importing…" : `Import ${preview.count} →`}</button>
-                  <button className={s.obBtnGhost} disabled={!!busy} onClick={() => setPreview(null)}>Pick another</button>
-                </div>
-              </div>
-            )}
+            <div className={s.obTileBody}>Upload a bank/card statement (PDF, CSV or XLSX). It is parsed and sorted <b>in your browser</b> — an on-device model, no cloud AI — and you can ask it questions before anything is imported.</div>
+            <a className={s.obBtn} href="/import">Import a statement →</a>
           </div>
         </div>
         {err && <div className={s.obErr}>{err}</div>}
