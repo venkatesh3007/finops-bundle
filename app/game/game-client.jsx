@@ -77,7 +77,7 @@ const TOUR = [
   { title: "Welcome to your warehouse", body: "I'm the Foreman — your guide. Six taps and you'll know how to play. I'll get out of your way after that.", cta: "Show me the ropes" },
   { sel: '[data-tour="season"]', place: "below", title: "Your year", body: "Each tile is a month — a delivery of transactions. A gold dot means items are waiting. Tap one to open it." },
   { sel: '[data-tour="head"]', place: "below", title: "What needs YOU", body: "The robot already sorted most of the pile. This big number is what's left for you to decide. The ring is how much of the month is matched." },
-  { sel: '[data-tour="quads"]', place: "above", title: "The shape of your month", body: "In vs out, fixed vs variable — planned → actual. Green is helping you, red is over. Your cashflow at a glance." },
+  { sel: '[data-tour="quads"]', place: "above", title: "Your warehouse", body: "Every category is a shelf, stacked in an aisle — Fixed/Variable, In/Out. That's your cashflow model and your money's home in one. Tap any shelf to see the crates on it." },
   { sel: '[data-tour="cards"]', place: "above", title: "The calls that need a person", body: "Each card is one transaction that needs your judgment — merchant, amount, where it came from. Categorize it, add it to your plan, accept, or park it — and every call teaches the game a rule for next time." },
   { sel: '[data-tour="lock"]', place: "below", title: "Seal the month", body: "When nothing needs you, lock it to bank your streak. That's a full round." },
   { title: "You're all set", body: "I'll keep a nudge on-screen telling you the single best next move. Tap ? up top to replay this anytime.", cta: "Start playing" },
@@ -531,8 +531,8 @@ function MonthBoard({ entity, month, onChanged }) {
 
       <NextHint board={board} onLock={lock} busy={busy} />
 
-      {/* the four-quadrant cashflow board, reconciled: plan → reality */}
-      {board.buckets && <Quadrants b={board.buckets} />}
+      {/* the warehouse — shelves stacked into floor-plan zones (your cashflow model) */}
+      <Warehouse entity={entity} month={month} />
 
       {/* the auto-matched reel — collapsed by default (never the raw pile) */}
       <button className={s.autoBar} onClick={() => setExpand((x) => !x)}>
@@ -571,6 +571,87 @@ function MonthBoard({ entity, month, onChanged }) {
       )}
 
       {payoff && <LockSeal payoff={payoff} month={month} onClose={() => setPayoff(null)} />}
+    </div>
+  );
+}
+
+/* THE WAREHOUSE — shelves (categories/counterparties) stacked into floor-plan
+   zones (your fixed/variable × in/out aisles). Tap a shelf to open its crates.
+   This replaces the quadrant bars: same cashflow read, but you can see inside. */
+function Warehouse({ entity, month }) {
+  const [w, setW] = useState(null);
+  const [open, setOpen] = useState(null);
+  const [crates, setCrates] = useState(null);
+
+  useEffect(() => {
+    setW(null); setOpen(null);
+    fetch(`/api/game/warehouse?entity=${entity}&month=${month}`).then((r) => r.json()).then(setW);
+  }, [entity, month]);
+
+  const drill = async (account) => {
+    if (open === account) { setOpen(null); return; }
+    setOpen(account); setCrates(null);
+    const [y, m] = month.split("-").map(Number);
+    const last = new Date(y, m, 0).getDate();
+    const j = await (await fetch(`/api/txns?entity=${entity}&account=${encodeURIComponent(account)}&from=${month}-01&to=${month}-${String(last).padStart(2, "0")}&limit=40`)).json();
+    setCrates(j.txns || []);
+  };
+
+  if (!w) return <div className={s.whLoading} data-tour="quads">Opening the warehouse…</div>;
+  if (w.error) return <div className={s.whLoading} data-tour="quads">⚠ {w.error}</div>;
+
+  const inA = w.zones.filter((z) => z.dir === "in").reduce((s2, z) => s2 + z.actual, 0);
+  const outA = w.zones.filter((z) => z.dir === "out").reduce((s2, z) => s2 + z.actual, 0);
+  const inP = w.zones.filter((z) => z.dir === "in").reduce((s2, z) => s2 + z.planned, 0);
+  const outP = w.zones.filter((z) => z.dir === "out").reduce((s2, z) => s2 + z.planned, 0);
+
+  const Zone = (z, side) => (
+    <div className={`${s.whzone} ${side ? s.whsideZone : (z.dir === "in" ? s.whin : s.whout)}`} key={z.key}>
+      <div className={s.whzhead}>
+        <span className={s.whzlabel}>{z.label}</span>
+        <span className={s.whzsum}>{!side && z.planned ? <><span className={s.whzplan}>{compact(z.planned)} →</span> </> : null}<b>{compact(z.actual)}</b></span>
+      </div>
+      <div className={s.whshelves}>
+        {z.shelves.map((sh) => (
+          <button key={sh.account} className={`${s.whshelf} ${open === sh.account ? s.whshelfOn : ""}`} onClick={() => drill(sh.account)}>
+            <span className={s.whsname}>{sh.name}</span>
+            <span className={s.whsamt}>{compact(sh.amount)}{sh.count != null && <i> ·{sh.count}</i>}</span>
+          </button>
+        ))}
+        {!z.shelves.length && <span className={s.whEmpty}>empty — nothing landed here</span>}
+      </div>
+      {z.shelves.some((sh) => sh.account === open) && <Crates crates={crates} />}
+    </div>
+  );
+
+  return (
+    <div className={s.wh} data-tour="quads">
+      <div className={s.whaisle}>◤ Inbound · money in</div>
+      <div className={s.whrow}>{w.zones.filter((z) => z.dir === "in").map((z) => Zone(z))}</div>
+      <div className={s.whaisle}>◣ Outbound · money out</div>
+      <div className={s.whrow}>{w.zones.filter((z) => z.dir === "out").map((z) => Zone(z))}</div>
+      <div className={s.whnet}>
+        <span>Net this month</span>
+        <span className={s.whnetNums}><span className={s.whzplan}>plan {compact(inP - outP)} →</span> <b className={inA - outA >= 0 ? s.pos : s.neg}>{compact(inA - outA)}</b></span>
+      </div>
+      <div className={s.whaisle}>◈ Off-cashflow zones</div>
+      <div className={s.whsideRow}>{w.side.map((z) => Zone(z, true))}</div>
+    </div>
+  );
+}
+function Crates({ crates }) {
+  if (!crates) return <div className={s.whCratesLoad}>opening…</div>;
+  if (!crates.length) return <div className={s.whCratesLoad}>no crates this month</div>;
+  return (
+    <div className={s.whCrates}>
+      {crates.slice(0, 14).map((c) => (
+        <div className={s.crate} key={c.id}>
+          <span className={s.crDate}>{c.date}</span>
+          <span className={s.crWho} title={c.narration || c.payee}>{c.narration || c.payee || "—"}</span>
+          <span className={s.crAmt}>{inr(Math.abs(c.amount))}</span>
+        </div>
+      ))}
+      {crates.length > 14 && <div className={s.crMore}>+{crates.length - 14} more crates</div>}
     </div>
   );
 }

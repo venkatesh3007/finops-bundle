@@ -559,3 +559,51 @@
 @keyframes lockpulse{ 0%,100%{ box-shadow:0 0 0 0 color-mix(in srgb,var(--ac) 55%,transparent) } 50%{ box-shadow:0 0 0 7px transparent } }
 
 @media (prefers-reduced-motion:reduce){ .nextDot,.lockReady,.tourHole{ animation:none; transition:none } }
+
+/* ============================================================= */
+/* ================  THE WAREHOUSE BOARD (shelves)  =========== */
+/* ============================================================= */
+.whLoading{ margin-top:12px; padding:30px; text-align:center; color:var(--mut); background:var(--panel); border:1px solid var(--line); border-radius:14px; }
+.wh{ margin-top:12px; }
+.whaisle{ font-size:10px; font-weight:800; letter-spacing:.14em; text-transform:uppercase; color:var(--faint); margin:14px 0 8px; }
+.whaisle:first-child{ margin-top:0; }
+.whrow{ display:grid; grid-template-columns:1fr 1fr; gap:11px; }
+.whsideRow{ display:grid; grid-template-columns:repeat(3,1fr); gap:11px; }
+
+.whzone{ background:var(--panel); border:1px solid var(--line2); border-radius:13px; padding:12px 13px; position:relative; overflow:hidden; }
+.whzone::before{ content:""; position:absolute; inset:0 0 auto 0; height:2px; }
+.whin::before{ background:var(--win); } .whout::before{ background:var(--gold); } .whsideZone::before{ background:var(--mut2); }
+.whzhead{ display:flex; align-items:baseline; justify-content:space-between; gap:8px; margin-bottom:10px; }
+.whzlabel{ font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; color:var(--ink); }
+.whzsum{ font-size:12px; font-variant-numeric:tabular-nums; color:var(--ink); } .whzsum b{ font-weight:800; }
+.whzplan{ color:var(--faint); font-weight:600; }
+
+/* the shelves — tappable crates-on-a-shelf */
+.whshelves{ display:flex; flex-wrap:wrap; gap:7px; }
+.whshelf{ display:flex; flex-direction:column; gap:2px; align-items:flex-start; text-align:left; font:inherit; cursor:pointer;
+  background:var(--bg2); border:1px solid var(--line2); border-bottom-width:3px; border-radius:8px; padding:7px 10px 6px; transition:transform .1s, border-color .15s; }
+.whshelf:hover{ transform:translateY(-1px); border-color:var(--ac); }
+.whin .whshelf{ border-bottom-color:color-mix(in srgb,var(--win) 55%,var(--line2)); }
+.whout .whshelf{ border-bottom-color:color-mix(in srgb,var(--gold) 45%,var(--line2)); }
+.whsideZone .whshelf{ border-bottom-color:var(--line2); }
+.whshelfOn{ border-color:var(--ac); box-shadow:0 0 0 2px color-mix(in srgb,var(--ac) 22%,transparent); }
+.whsname{ font-size:11.5px; font-weight:650; white-space:nowrap; max-width:150px; overflow:hidden; text-overflow:ellipsis; }
+.whsamt{ font-size:12px; font-weight:800; font-variant-numeric:tabular-nums; } .whsamt i{ color:var(--faint); font-style:normal; font-weight:600; font-size:10.5px; }
+.whEmpty{ font-size:11.5px; color:var(--faint); font-style:italic; }
+
+/* crates drill */
+.whCrates{ margin-top:11px; border-top:1px solid var(--line); padding-top:9px; display:grid; gap:1px; }
+.whCratesLoad{ margin-top:11px; border-top:1px solid var(--line); padding-top:9px; font-size:11.5px; color:var(--faint); }
+.crate{ display:grid; grid-template-columns:74px 1fr auto; gap:9px; align-items:center; padding:5px 2px; font-size:11.5px; border-bottom:1px solid var(--line); }
+.crate:last-child{ border-bottom:0; }
+.crDate{ color:var(--faint); font-variant-numeric:tabular-nums; }
+.crWho{ color:var(--mut); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.crAmt{ color:var(--ink); font-weight:700; font-variant-numeric:tabular-nums; }
+.crMore{ font-size:10.5px; color:var(--faint); padding-top:5px; }
+
+/* net line */
+.whnet{ display:flex; align-items:center; justify-content:space-between; margin-top:11px; padding:11px 14px; background:var(--panel2); border:1px solid var(--line2); border-radius:12px; }
+.whnet>span:first-child{ font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; color:var(--mut); }
+.whnetNums{ font-variant-numeric:tabular-nums; } .whnetNums b{ font-size:17px; font-weight:800; }
+
+@media (max-width:760px){ .whrow{ grid-template-columns:1fr; } .whsideRow{ grid-template-columns:1fr; } .crate{ grid-template-columns:64px 1fr auto; } }
