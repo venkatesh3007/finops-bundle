@@ -600,7 +600,7 @@ function Warehouse({ entity, month }) {
   const loadCrates = useCallback(async (account) => {
     setCrates(null);
     const [y, m] = month.split("-").map(Number); const last = new Date(y, m, 0).getDate();
-    const j = await (await fetch(`/api/txns?entity=${entity}&account=${encodeURIComponent(account)}&from=${month}-01&to=${month}-${String(last).padStart(2, "0")}&limit=40`)).json();
+    const j = await (await fetch(`/api/txns?entity=${entity}&account=${encodeURIComponent(account)}&from=${month}-01&to=${month}-${String(last).padStart(2, "0")}&withcorr=1&limit=60`)).json();
     setCrates(j.txns || []);
   }, [entity, month]);
 
@@ -660,20 +660,40 @@ function Warehouse({ entity, month }) {
     </div>
   );
 }
-// Net out cancelling pairs (a correction against its original / a pass-through in
-// and straight back out) so the drill shows only the REAL crates that make up the
-// shelf total — not the book plumbing that sums to zero.
+// Book plumbing markers — corrections, reversals, sweeps, pass-throughs. These
+// entries cancel real postings; we net them out so the drill shows only the crates
+// that actually make up the shelf total.
+const PLUMB = /correction|reversal|sweep|pass-through|reclassif|recovered|catch-up|missed statement/i;
+// bounded subset-sum: a subset of `pool` summing to `target` (± ₹1), or null.
+function subsetSum(pool, target, maxLen) {
+  const res = [];
+  const dfs = (start, rem, depth) => {
+    if (Math.abs(rem) < 1) return true;
+    if (depth >= maxLen || start >= pool.length) return false;
+    for (let i = start; i < pool.length; i++) { res.push(pool[i]); if (dfs(i + 1, rem - pool[i].a, depth + 1)) return true; res.pop(); }
+    return false;
+  };
+  return dfs(0, target, 0) ? [...res] : null;
+}
+// Net out cancelling entries so only the REAL crates remain:
+//   1) exact opposite-sign pairs (a correction vs its original),
+//   2) one-to-many — a plumbing entry (sweep/correction) vs the SET of entries it offsets.
 function netOut(crates) {
+  const it = crates.map((c) => ({ a: Math.round(Number(c.amount)), plumb: PLUMB.test((c.narration || "") + " " + (c.payee || "")) }));
   const used = new Set();
-  for (let i = 0; i < crates.length; i++) {
-    if (used.has(i)) continue;
-    const a = Number(crates[i].amount);
-    if (a === 0) { used.add(i); continue; }
-    for (let j = i + 1; j < crates.length; j++) {
+  for (let i = 0; i < it.length; i++) {
+    if (used.has(i)) continue; const a = it[i].a; if (a === 0) { used.add(i); continue; }
+    for (let j = i + 1; j < it.length; j++) {
       if (used.has(j)) continue;
-      const b = Number(crates[j].amount);
-      if (Math.sign(a) !== Math.sign(b) && Math.abs(Math.abs(a) - Math.abs(b)) < 1) { used.add(i); used.add(j); break; }
+      if (Math.sign(a) !== Math.sign(it[j].a) && Math.abs(Math.abs(a) - Math.abs(it[j].a)) < 1) { used.add(i); used.add(j); break; }
     }
+  }
+  for (let i = 0; i < it.length; i++) {
+    if (used.has(i) || !it[i].plumb || it[i].a === 0) continue;
+    const target = -it[i].a;
+    const pool = it.map((x, j) => ({ j, a: x.a })).filter((x) => !used.has(x.j) && x.j !== i && Math.sign(x.a) === Math.sign(target));
+    const sub = subsetSum(pool, target, 5);
+    if (sub) { used.add(i); sub.forEach((sx) => used.add(sx.j)); }
   }
   return crates.filter((_, i) => !used.has(i));
 }
@@ -688,6 +708,7 @@ function Crates({ crates, fromAccount, targets, onMove, busy }) {
   const real = netOut(crates);
   const plumbing = crates.length - real.length;
   const list = showPlumbing ? crates : real;
+  const net = Math.abs(real.reduce((a, c) => a + Number(c.amount), 0));
   const opts = targets.filter((t) => t.account !== fromAccount);
   const doMove = (id) => {
     const to = custom.trim() ? shelfToAccount(custom, fromAccount) : pick;
@@ -720,6 +741,7 @@ function Crates({ crates, fromAccount, targets, onMove, busy }) {
         </div>
       ))}
       {list.length > 16 && <div className={s.crMore}>+{list.length - 16} more crates</div>}
+      {!showPlumbing && <div className={s.crNet}>{real.length} real {real.length === 1 ? "crate" : "crates"} · net <b>{inr(net)}</b></div>}
     </div>
   );
 }

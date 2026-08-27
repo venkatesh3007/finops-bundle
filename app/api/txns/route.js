@@ -17,14 +17,15 @@ export async function GET(req) {
     if (!ent.length) return Response.json({ error: "no entity" }, { status: 400 });
     const entId = ent[0].id;
 
-    const where = ["t.entity_id = $1", "t.corrects_id is null"];
+    // withcorr: include correcting entries too (the shelf-drill nets them client-side,
+    // so the drill reconciles to the shelf total and shows moved crates on both sides).
+    const where = q.withcorr ? ["t.entity_id = $1"] : ["t.entity_id = $1", "t.corrects_id is null"];
     const params = [entId];
     const P = (v) => { params.push(v); return `$${params.length}`; };
     if (q.account) {
       where.push(`a.name like ${P(q.account + "%")}`);
-      // hide crates that have been reclassified OFF this account (a board "move"):
-      // a correcting entry that credits this account for the same transaction.
-      where.push(`not exists (select 1 from transactions ct join postings cp on cp.transaction_id=ct.id
+      // without withcorr, hide crates reclassified OFF this account (netting isn't applied).
+      if (!q.withcorr) where.push(`not exists (select 1 from transactions ct join postings cp on cp.transaction_id=ct.id
         join accounts ca on ca.id=cp.account_id
         where ct.corrects_id=t.id and ca.name like ${P(q.account + "%")} and cp.amount < 0)`);
     }
