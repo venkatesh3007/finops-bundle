@@ -524,6 +524,7 @@ function MonthBoard({ entity, month, onChanged }) {
 
   const cleared = board.exceptions === 0;
   const misses = board.cards.filter((c) => c.kind === "miss");
+  const surprises = board.cards.filter((c) => c.kind === "surprise");
 
   return (
     <div className={s.board}>
@@ -553,7 +554,7 @@ function MonthBoard({ entity, month, onChanged }) {
       ) : (
         <div className={s.cards} data-tour="cards">
           {board.cards.map((c) => c.kind === "miss"
-            ? <MissCard key={c.planLineId} c={c} busy={busy} card={card} />
+            ? <MissCard key={c.planLineId} c={c} surprises={surprises} busy={busy} card={card} />
             : <SurpriseCard key={c.txnId} c={c} misses={misses} cats={board.categories} busy={busy} card={card} />)}
         </div>
       )}
@@ -895,7 +896,11 @@ function NextHint({ board, onLock, busy }) {
 }
 
 /* a planned line that never landed — the player rules on it */
-function MissCard({ c, busy, card }) {
+function MissCard({ c, surprises, busy, card }) {
+  const [mode, setMode] = useState(null); // null | 'match' | 'edit'
+  const sameDir = (surprises || []).filter((sp) => c.dir === "in" ? sp.flow === "income" : sp.flow === "expense");
+  const [pick, setPick] = useState(sameDir[0]?.txnId || "");
+  const [amt, setAmt] = useState(String(c.planned));
   return (
     <div className={`${s.exc} ${s.excMiss}`}>
       <div className={s.excLeft}>
@@ -905,10 +910,29 @@ function MissCard({ c, busy, card }) {
           <span className={s.excMeta}>planned {inr(c.planned)}{c.hint ? ` · ${c.hint}` : ""} — no matching {c.dir === "in" ? "receipt" : "payment"} found</span>
         </div>
       </div>
-      <div className={s.excActs}>
-        <button className={s.actGhost} disabled={busy} onClick={() => card({ action: "carry", planLineId: c.planLineId })}>Carry →</button>
-        <button className={s.actGhost} disabled={busy} onClick={() => card({ action: "skip", planLineId: c.planLineId })}>Didn't happen</button>
-      </div>
+      {!mode ? (
+        <div className={s.excActs}>
+          {sameDir.length > 0 && <button className={s.actPrimary} disabled={busy} title="it did happen — tie it to the real transaction" onClick={() => setMode("match")}>It happened →</button>}
+          <button className={s.actGhost} disabled={busy} title="push it to next month" onClick={() => card({ action: "carry", planLineId: c.planLineId })}>Carry →</button>
+          <button className={s.actGhost} disabled={busy} title="fix the planned amount" onClick={() => setMode("edit")}>Edit</button>
+          <button className={s.actGhost} disabled={busy} title="it's not coming — drop it" onClick={() => card({ action: "skip", planLineId: c.planLineId })}>Didn't happen</button>
+        </div>
+      ) : mode === "match" ? (
+        <div className={s.linkPick}>
+          <select value={pick} onChange={(e) => setPick(e.target.value)}>
+            {sameDir.map((sp) => <option key={sp.txnId} value={sp.txnId}>{(sp.payee || sp.narration || "—").slice(0, 34)} · {inr(sp.amount)}</option>)}
+          </select>
+          <button className={s.actPrimary} disabled={busy || !pick} onClick={() => card({ action: "link", planLineId: c.planLineId, txnId: pick })}>Match ✓</button>
+          <button className={s.pickBack} onClick={() => setMode(null)}>✕</button>
+        </div>
+      ) : (
+        <div className={s.moveRow}>
+          <span className={s.splitSep}>planned ₹</span>
+          <input className={s.splitAmt} inputMode="numeric" value={amt} onChange={(e) => setAmt(e.target.value.replace(/[^\d]/g, ""))} />
+          <button className={s.moveGo} disabled={busy || !amt} onClick={() => { card({ action: "editplan", planLineId: c.planLineId, amount: Number(amt) }); setMode(null); }}>Save</button>
+          <button className={s.pickBack} onClick={() => setMode(null)}>✕</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -925,16 +949,24 @@ function SurpriseCard({ c, misses, cats, busy, card, parked }) {
   const [to, setTo] = useState("");
   const [custom, setCustom] = useState("");
   const [rule, setRule] = useState(true);
+  const [splitAmt, setSplitAmt] = useState("");
   const isIncome = c.flow === "income";
   const bucket = isIncome ? "var_in" : "var_out";
   const label = (c.payee || c.narration || "Unplanned").slice(0, 40);
   const from = c.account || (isIncome ? "Income:Other" : "Expenses:Other");
   const shelfOpts = [...cats.map((a) => ({ account: a, name: leaf(a) })), ...WORK_SHELVES].filter((o) => o.account !== from);
+  const target = () => custom.trim() ? shelfToAccount(custom, from) : to;
   const doShelf = () => {
-    const target = custom.trim() ? shelfToAccount(custom, from) : to;
-    if (!target || target === from) return;
-    card({ action: "recat", txnId: c.txnId, fromAccount: from, toAccount: target, makeRule: rule });
+    const t = target();
+    if (!t || t === from) return;
+    card({ action: "recat", txnId: c.txnId, fromAccount: from, toAccount: t, makeRule: rule });
     setMode(null); setTo(""); setCustom("");
+  };
+  const doSplit = () => {
+    const t = target();
+    if (!t || t === from || !(Number(splitAmt) > 0)) return;
+    card({ action: "split", txnId: c.txnId, fromAccount: from, toAccount: t, amount: Number(splitAmt) });
+    setMode(null); setTo(""); setCustom(""); setSplitAmt("");
   };
 
   return (
@@ -969,7 +1001,10 @@ function SurpriseCard({ c, misses, cats, busy, card, parked }) {
           </select>
           <input className={s.moveNew} placeholder="or new shelf…" value={custom} onChange={(e) => setCustom(e.target.value)} />
           <label className={s.moveRule}><input type="checkbox" checked={rule} onChange={(e) => setRule(e.target.checked)} /> rule</label>
-          <button className={s.moveGo} disabled={busy || (!to && !custom.trim())} onClick={doShelf}>Put</button>
+          <button className={s.moveGo} disabled={busy || (!to && !custom.trim())} onClick={doShelf}>Put all</button>
+          <span className={s.splitSep}>or</span>
+          <input className={s.splitAmt} inputMode="numeric" placeholder="₹ split" value={splitAmt} onChange={(e) => setSplitAmt(e.target.value.replace(/[^\d]/g, ""))} />
+          <button className={s.moveGo2} disabled={busy || !splitAmt || (!to && !custom.trim())} onClick={doSplit}>Split</button>
           <button className={s.pickBack} onClick={() => setMode(null)}>✕</button>
         </div>
       ) : mode === "link" ? (
