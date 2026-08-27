@@ -24,4 +24,6 @@ export function middleware(req) {
   const url = req.nextUrl.clone(); url.pathname = "/login"; url.search = "";
   return NextResponse.redirect(url);
 }
-export const config = { matcher: ["/((?!_next|favicon.ico).*)"] };
+// Exclude self-hosted static workers/vendor (pdf.js worker, transformers/ONNX, the
+// llm worker) from the auth gate so the browser can fetch them as modules directly.
+export const config = { matcher: ["/((?!_next|favicon.ico|pdf.worker|llm.worker|vendor).*)"] };
