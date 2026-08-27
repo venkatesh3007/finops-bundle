@@ -1,10 +1,17 @@
-import { resolveReclassify, addManualEntry, claimReimbursement, markReview } from "../../../../lib/moves";
+import { resolveReclassify, splitReclassify, addManualEntry, claimReimbursement, markReview } from "../../../../lib/moves";
 export const maxDuration = 60;
 export async function POST(req) {
   try {
     const b = await req.json(); const { action, entity = "personal" } = b;
     let result;
     if (action === "reclassify") result = await resolveReclassify(entity, b);
+    else if (action === "bulk") {  // reclassify many crates to one shelf in one call
+      const items = Array.isArray(b.items) ? b.items : [];
+      result = [];
+      for (const it of items) result.push(await resolveReclassify(entity, { txnId: it.txnId, fromAccount: it.fromAccount, toAccount: b.toAccount, makeRule: b.makeRule }));
+      result = { moved: result.length };
+    }
+    else if (action === "split") result = await splitReclassify(entity, b);
     else if (action === "add") result = await addManualEntry(entity, b);
     else if (action === "claim") result = await claimReimbursement(entity, b);
     else if (action === "review") result = await markReview(entity, b);

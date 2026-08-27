@@ -606,15 +606,15 @@ function Warehouse({ entity, month }) {
 
   const drill = (account) => { if (open === account) { setOpen(null); return; } setOpen(account); loadCrates(account); };
 
+  const reload = async () => { await loadW(); if (open) await loadCrates(open); };
+  const post = async (body) => { setBusy(true); try { const j = await (await fetch("/api/game/move", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ entity, ...body }) })).json(); if (!j.error) await reload(); return j; } finally { setBusy(false); } };
   // move a crate to another shelf — a reclassification (append-only correction).
-  const move = async (txnId, fromAccount, toAccount, makeRule) => {
-    if (!toAccount || toAccount === fromAccount) return;
-    setBusy(true);
-    try {
-      const j = await (await fetch("/api/game/move", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ entity, action: "reclassify", txnId, fromAccount, toAccount, makeRule }) })).json();
-      if (!j.error) { await loadW(); if (open) await loadCrates(open); }
-    } finally { setBusy(false); }
-  };
+  const move = (txnId, fromAccount, toAccount, makeRule) => (toAccount && toAccount !== fromAccount) && post({ action: "reclassify", txnId, fromAccount, toAccount, makeRule });
+  // bulk-move many crates to one shelf; split one crate across two shelves.
+  const bulkMove = (items, toAccount, makeRule) => toAccount && post({ action: "bulk", items, toAccount, makeRule });
+  const splitCrate = (txnId, fromAccount, toAccount, amount) => (toAccount && amount > 0) && post({ action: "split", txnId, fromAccount, toAccount, amount });
+  // move a whole shelf between the Fixed and Variable aisle.
+  const setZone = async (account, fixed) => { setBusy(true); try { const j = await (await fetch("/api/game/zone", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ entity, account, fixed }) })).json(); if (!j.error) await loadW(); } finally { setBusy(false); } };
 
   if (!w) return <div className={s.whLoading} data-tour="quads">Opening the warehouse…</div>;
   if (w.error) return <div className={s.whLoading} data-tour="quads">⚠ {w.error}</div>;
@@ -641,7 +641,10 @@ function Warehouse({ entity, month }) {
         ))}
         {!z.shelves.length && <span className={s.whEmpty}>empty — nothing landed here</span>}
       </div>
-      {z.shelves.some((sh) => sh.account === open) && <Crates crates={crates} fromAccount={open} shelfAmount={z.shelves.find((sh) => sh.account === open)?.amount} targets={targets} onMove={move} busy={busy} />}
+      {z.shelves.some((sh) => sh.account === open) && (() => { const os = z.shelves.find((sh) => sh.account === open); return (
+        <Crates crates={crates} fromAccount={open} shelfAmount={os?.amount} shelfDir={side ? null : z.dir} shelfFixed={os?.fixed}
+          targets={targets} onMove={move} onBulk={bulkMove} onSplit={splitCrate} onZone={setZone} busy={busy} />
+      ); })()}
     </div>
   );
 
@@ -701,55 +704,76 @@ const VERBS = (acc) => acc.startsWith("Income") ? ["received", "reversed"]
   : acc.startsWith("Assets:Receivable") ? ["fronted", "reimbursed"]
   : acc.startsWith("Assets:Investments") ? ["put in", "took out"]
   : ["spent", "came back"];
-function Crates({ crates, fromAccount, shelfAmount, targets, onMove, busy }) {
-  const [moving, setMoving] = useState(null);   // txnId with the move-picker open
+function Crates({ crates, fromAccount, shelfAmount, shelfDir, shelfFixed, targets, onMove, onBulk, onSplit, onZone, busy }) {
+  const [moving, setMoving] = useState(null);   // txnId with the per-crate action row open
   const [pick, setPick] = useState("");
   const [custom, setCustom] = useState("");
   const [rule, setRule] = useState(true);
+  const [splitAmt, setSplitAmt] = useState("");
   const [showPlumbing, setShowPlumbing] = useState(false);
   const [showAll, setShowAll] = useState(false);
+  const [sel, setSel] = useState(() => new Set());
+  const [bulkTo, setBulkTo] = useState("");
   if (!crates) return <div className={s.whCratesLoad}>opening…</div>;
   if (!crates.length) return <div className={s.whCratesLoad}>no crates on this shelf</div>;
   const real = netOut(crates);
   const plumbing = crates.length - real.length;
   const list = showPlumbing ? crates : real;
-  // direction: for an expense shelf, +amount = spent (primary), −amount = came back (a
-  // split-repayment). For income, −amount = received. Show both so mixed shelves read true.
   const primarySign = fromAccount.startsWith("Income") ? -1 : 1;
   const [primaryVerb, backVerb] = VERBS(fromAccount);
   const gross = real.filter((c) => Math.sign(Number(c.amount)) === primarySign).reduce((a, c) => a + Math.abs(Number(c.amount)), 0);
   const back = real.filter((c) => Math.sign(Number(c.amount)) === -primarySign).reduce((a, c) => a + Math.abs(Number(c.amount)), 0);
-  const net = shelfAmount != null ? shelfAmount : Math.abs(gross - back);   // tie to the shelf tile exactly
+  const net = shelfAmount != null ? shelfAmount : Math.abs(gross - back);
   const opts = targets.filter((t) => t.account !== fromAccount);
   const LIMIT = showAll ? 999 : 18;
-  const doMove = (id) => {
-    const to = custom.trim() ? shelfToAccount(custom, fromAccount) : pick;
-    onMove(id, fromAccount, to, rule); setMoving(null); setCustom(""); setPick("");
-  };
+  const target = () => custom.trim() ? shelfToAccount(custom, fromAccount) : pick;
+  const doMove = (id) => { onMove(id, fromAccount, target(), rule); setMoving(null); setCustom(""); setPick(""); };
+  const doSplit = (id) => { onSplit(id, fromAccount, target(), Number(splitAmt)); setMoving(null); setCustom(""); setPick(""); setSplitAmt(""); };
+  const toggleSel = (id) => setSel((s2) => { const n = new Set(s2); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const doBulk = () => { onBulk([...sel].map((id) => ({ txnId: id, fromAccount })), bulkTo, rule); setSel(new Set()); setBulkTo(""); };
   return (
     <div className={s.whCrates}>
-      <div className={s.whCratesHint}>Tap <b>⇄</b> to move a crate to another shelf — it teaches a rule for next time.
+      {shelfDir && (
+        <div className={s.aisleRow}>
+          <span>This shelf is <b>{shelfFixed ? "Fixed" : "Variable"} · {shelfDir === "in" ? "In" : "Out"}</b></span>
+          <button className={s.aisleBtn} disabled={busy} onClick={() => onZone(fromAccount, !shelfFixed)}>→ move to {shelfFixed ? "Variable" : "Fixed"} aisle</button>
+        </div>
+      )}
+      <div className={s.whCratesHint}>Select crates to bulk-move, or tap <b>⇄</b> to move / split one — it teaches a rule for next time.
         {plumbing > 0 && <button className={s.plumbBtn} onClick={() => setShowPlumbing((x) => !x)}>{showPlumbing ? "hide" : "show"} {plumbing} netted-out {plumbing === 1 ? "entry" : "entries"}</button>}
       </div>
+      {sel.size > 0 && (
+        <div className={s.bulkBar}>
+          <span className={s.bulkN}>{sel.size} selected</span>
+          <select className={s.moveSel} value={bulkTo} onChange={(e) => setBulkTo(e.target.value)}><option value="">move all to…</option>{opts.map((t) => <option key={t.account} value={t.account}>{t.name}</option>)}</select>
+          <label className={s.moveRule}><input type="checkbox" checked={rule} onChange={(e) => setRule(e.target.checked)} /> rule</label>
+          <button className={s.moveGo} disabled={busy || !bulkTo} onClick={doBulk}>Move {sel.size} →</button>
+          <button className={s.pickBack} onClick={() => setSel(new Set())}>clear</button>
+        </div>
+      )}
       {list.slice(0, LIMIT).map((c) => {
         const primary = Math.sign(Number(c.amount)) === primarySign;
         return (
           <div key={c.id}>
-            <div className={s.crate}>
+            <div className={`${s.crate} ${sel.has(c.id) ? s.crateSel : ""}`}>
+              <input type="checkbox" className={s.crSel} checked={sel.has(c.id)} onChange={() => toggleSel(c.id)} />
               <span className={s.crDate}>{c.date}</span>
               <span className={s.crWho} title={c.narration || c.payee}>{c.narration || c.payee || "—"}</span>
               <span className={primary ? s.crAmt : s.crBack} title={primary ? primaryVerb : `${backVerb} — reduces this shelf`}>{primary ? "" : "↩ "}{inr(Math.abs(c.amount))}</span>
-              <button className={s.crMove} disabled={busy} title="move to another shelf" onClick={() => setMoving(moving === c.id ? null : c.id)}>⇄</button>
+              <button className={s.crMove} disabled={busy} title="move or split" onClick={() => setMoving(moving === c.id ? null : c.id)}>⇄</button>
             </div>
             {moving === c.id && (
               <div className={s.moveRow}>
                 <select className={s.moveSel} value={pick} onChange={(e) => { setPick(e.target.value); setCustom(""); }}>
-                  <option value="">move to shelf…</option>
+                  <option value="">to shelf…</option>
                   {opts.map((t) => <option key={t.account} value={t.account}>{t.name}</option>)}
                 </select>
                 <input className={s.moveNew} placeholder="or new shelf…" value={custom} onChange={(e) => setCustom(e.target.value)} />
                 <label className={s.moveRule}><input type="checkbox" checked={rule} onChange={(e) => setRule(e.target.checked)} /> rule</label>
-                <button className={s.moveGo} disabled={busy || (!pick && !custom.trim())} onClick={() => doMove(c.id)}>Move</button>
+                <button className={s.moveGo} disabled={busy || (!pick && !custom.trim())} onClick={() => doMove(c.id)}>Move all</button>
+                <span className={s.splitSep}>or</span>
+                <input className={s.splitAmt} inputMode="numeric" placeholder="₹ split" value={splitAmt} onChange={(e) => setSplitAmt(e.target.value.replace(/[^\d]/g, ""))} />
+                <button className={s.moveGo2} disabled={busy || !splitAmt || (!pick && !custom.trim())} onClick={() => doSplit(c.id)}>Split</button>
               </div>
             )}
           </div>
