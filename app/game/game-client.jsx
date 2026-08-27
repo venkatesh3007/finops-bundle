@@ -641,7 +641,7 @@ function Warehouse({ entity, month }) {
         ))}
         {!z.shelves.length && <span className={s.whEmpty}>empty — nothing landed here</span>}
       </div>
-      {z.shelves.some((sh) => sh.account === open) && <Crates crates={crates} fromAccount={open} targets={targets} onMove={move} busy={busy} />}
+      {z.shelves.some((sh) => sh.account === open) && <Crates crates={crates} fromAccount={open} shelfAmount={z.shelves.find((sh) => sh.account === open)?.amount} targets={targets} onMove={move} busy={busy} />}
     </div>
   );
 
@@ -697,19 +697,31 @@ function netOut(crates) {
   }
   return crates.filter((_, i) => !used.has(i));
 }
-function Crates({ crates, fromAccount, targets, onMove, busy }) {
+const VERBS = (acc) => acc.startsWith("Income") ? ["received", "reversed"]
+  : acc.startsWith("Assets:Receivable") ? ["fronted", "reimbursed"]
+  : acc.startsWith("Assets:Investments") ? ["put in", "took out"]
+  : ["spent", "came back"];
+function Crates({ crates, fromAccount, shelfAmount, targets, onMove, busy }) {
   const [moving, setMoving] = useState(null);   // txnId with the move-picker open
   const [pick, setPick] = useState("");
   const [custom, setCustom] = useState("");
   const [rule, setRule] = useState(true);
   const [showPlumbing, setShowPlumbing] = useState(false);
+  const [showAll, setShowAll] = useState(false);
   if (!crates) return <div className={s.whCratesLoad}>opening…</div>;
   if (!crates.length) return <div className={s.whCratesLoad}>no crates on this shelf</div>;
   const real = netOut(crates);
   const plumbing = crates.length - real.length;
   const list = showPlumbing ? crates : real;
-  const net = Math.abs(real.reduce((a, c) => a + Number(c.amount), 0));
+  // direction: for an expense shelf, +amount = spent (primary), −amount = came back (a
+  // split-repayment). For income, −amount = received. Show both so mixed shelves read true.
+  const primarySign = fromAccount.startsWith("Income") ? -1 : 1;
+  const [primaryVerb, backVerb] = VERBS(fromAccount);
+  const gross = real.filter((c) => Math.sign(Number(c.amount)) === primarySign).reduce((a, c) => a + Math.abs(Number(c.amount)), 0);
+  const back = real.filter((c) => Math.sign(Number(c.amount)) === -primarySign).reduce((a, c) => a + Math.abs(Number(c.amount)), 0);
+  const net = shelfAmount != null ? shelfAmount : Math.abs(gross - back);   // tie to the shelf tile exactly
   const opts = targets.filter((t) => t.account !== fromAccount);
+  const LIMIT = showAll ? 999 : 18;
   const doMove = (id) => {
     const to = custom.trim() ? shelfToAccount(custom, fromAccount) : pick;
     onMove(id, fromAccount, to, rule); setMoving(null); setCustom(""); setPick("");
@@ -719,29 +731,37 @@ function Crates({ crates, fromAccount, targets, onMove, busy }) {
       <div className={s.whCratesHint}>Tap <b>⇄</b> to move a crate to another shelf — it teaches a rule for next time.
         {plumbing > 0 && <button className={s.plumbBtn} onClick={() => setShowPlumbing((x) => !x)}>{showPlumbing ? "hide" : "show"} {plumbing} netted-out {plumbing === 1 ? "entry" : "entries"}</button>}
       </div>
-      {list.slice(0, 16).map((c) => (
-        <div key={c.id}>
-          <div className={s.crate}>
-            <span className={s.crDate}>{c.date}</span>
-            <span className={s.crWho} title={c.narration || c.payee}>{c.narration || c.payee || "—"}</span>
-            <span className={s.crAmt}>{inr(Math.abs(c.amount))}</span>
-            <button className={s.crMove} disabled={busy} title="move to another shelf" onClick={() => setMoving(moving === c.id ? null : c.id)}>⇄</button>
-          </div>
-          {moving === c.id && (
-            <div className={s.moveRow}>
-              <select className={s.moveSel} value={pick} onChange={(e) => { setPick(e.target.value); setCustom(""); }}>
-                <option value="">move to shelf…</option>
-                {opts.map((t) => <option key={t.account} value={t.account}>{t.name}</option>)}
-              </select>
-              <input className={s.moveNew} placeholder="or new shelf…" value={custom} onChange={(e) => setCustom(e.target.value)} />
-              <label className={s.moveRule}><input type="checkbox" checked={rule} onChange={(e) => setRule(e.target.checked)} /> rule</label>
-              <button className={s.moveGo} disabled={busy || (!pick && !custom.trim())} onClick={() => doMove(c.id)}>Move</button>
+      {list.slice(0, LIMIT).map((c) => {
+        const primary = Math.sign(Number(c.amount)) === primarySign;
+        return (
+          <div key={c.id}>
+            <div className={s.crate}>
+              <span className={s.crDate}>{c.date}</span>
+              <span className={s.crWho} title={c.narration || c.payee}>{c.narration || c.payee || "—"}</span>
+              <span className={primary ? s.crAmt : s.crBack} title={primary ? primaryVerb : `${backVerb} — reduces this shelf`}>{primary ? "" : "↩ "}{inr(Math.abs(c.amount))}</span>
+              <button className={s.crMove} disabled={busy} title="move to another shelf" onClick={() => setMoving(moving === c.id ? null : c.id)}>⇄</button>
             </div>
-          )}
+            {moving === c.id && (
+              <div className={s.moveRow}>
+                <select className={s.moveSel} value={pick} onChange={(e) => { setPick(e.target.value); setCustom(""); }}>
+                  <option value="">move to shelf…</option>
+                  {opts.map((t) => <option key={t.account} value={t.account}>{t.name}</option>)}
+                </select>
+                <input className={s.moveNew} placeholder="or new shelf…" value={custom} onChange={(e) => setCustom(e.target.value)} />
+                <label className={s.moveRule}><input type="checkbox" checked={rule} onChange={(e) => setRule(e.target.checked)} /> rule</label>
+                <button className={s.moveGo} disabled={busy || (!pick && !custom.trim())} onClick={() => doMove(c.id)}>Move</button>
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {list.length > LIMIT && <button className={s.crMoreBtn} onClick={() => setShowAll(true)}>show all {list.length} crates</button>}
+      {!showPlumbing && (
+        <div className={s.crNet}>
+          {real.length} {real.length === 1 ? "crate" : "crates"} · <b>{inr(gross)}</b> {primaryVerb}
+          {back > 0 && <> − <b className={s.pos}>{inr(back)}</b> {backVerb}</>} = net <b>{inr(net)}</b>
         </div>
-      ))}
-      {list.length > 16 && <div className={s.crMore}>+{list.length - 16} more crates</div>}
-      {!showPlumbing && <div className={s.crNet}>{real.length} real {real.length === 1 ? "crate" : "crates"} · net <b>{inr(net)}</b></div>}
+      )}
     </div>
   );
 }
@@ -870,12 +890,28 @@ function MissCard({ c, busy, card }) {
 }
 
 /* an unplanned real transaction ≥₹10k — the case file + one-tap calls */
+const WORK_SHELVES = [
+  { account: "Assets:Receivable:Flyy", name: "Work · Flyy" },
+  { account: "Assets:Receivable:Aikaara", name: "Work · Aikaara" },
+  { account: "Assets:Receivable:Arthsutra", name: "Work · Arthsutra" },
+];
 function SurpriseCard({ c, misses, cats, busy, card, parked }) {
-  const [mode, setMode] = useState(null); // null | 'cat' | 'link' | 'plan'
+  const [mode, setMode] = useState(null); // null | 'shelf' | 'link'
   const [pick, setPick] = useState(misses[0]?.planLineId || "");
+  const [to, setTo] = useState("");
+  const [custom, setCustom] = useState("");
+  const [rule, setRule] = useState(true);
   const isIncome = c.flow === "income";
   const bucket = isIncome ? "var_in" : "var_out";
   const label = (c.payee || c.narration || "Unplanned").slice(0, 40);
+  const from = c.account || (isIncome ? "Income:Other" : "Expenses:Other");
+  const shelfOpts = [...cats.map((a) => ({ account: a, name: leaf(a) })), ...WORK_SHELVES].filter((o) => o.account !== from);
+  const doShelf = () => {
+    const target = custom.trim() ? shelfToAccount(custom, from) : to;
+    if (!target || target === from) return;
+    card({ action: "recat", txnId: c.txnId, fromAccount: from, toAccount: target, makeRule: rule });
+    setMode(null); setTo(""); setCustom("");
+  };
 
   return (
     <div className={`${s.exc} ${s.excSurprise} ${parked ? s.excParked : ""}`}>
@@ -886,7 +922,7 @@ function SurpriseCard({ c, misses, cats, busy, card, parked }) {
           <span className={s.excMeta}>
             {c.date} · <b className={s.amt}>{inr(c.amount)}</b>
             {c.statement ? ` · via ${leaf(c.statement)}` : ""}
-            {c.account ? ` · ${leaf(c.account)}` : ""}
+            {c.account ? ` · now on ${leaf(c.account)}` : ""}
           </span>
           {c.narration && c.payee && <span className={s.excNarr}>{c.narration}</span>}
           {c.doc && <span className={s.excDoc}>📄 {docName(c.doc)}</span>}
@@ -895,17 +931,21 @@ function SurpriseCard({ c, misses, cats, busy, card, parked }) {
 
       {!mode ? (
         <div className={s.excActs}>
-          {c.canCategorize && <button className={s.actPrimary} disabled={busy} onClick={() => setMode("cat")}>Categorize</button>}
-          {misses.length > 0 && <button className={s.actGhost} disabled={busy} onClick={() => setMode("link")}>Was planned</button>}
-          <button className={s.actGhost} disabled={busy} onClick={() => card({ action: "newline", bucket, label, amount: c.amount, txnId: c.txnId })}>Add to plan</button>
-          <button className={s.actGhost} disabled={busy} onClick={() => card({ action: "accept", txnId: c.txnId })}>Accept</button>
-          {!parked && <button className={s.actGhost} disabled={busy} onClick={() => card({ action: "review", txnId: c.txnId })}>Later</button>}
+          <button className={s.actPrimary} disabled={busy} title="move it to the shelf where it belongs" onClick={() => setMode("shelf")}>Put on a shelf →</button>
+          {misses.length > 0 && <button className={s.actGhost} disabled={busy} title="you'd planned for this — tick it off" onClick={() => setMode("link")}>Was expected</button>}
+          <button className={s.actGhost} disabled={busy} title="add this as a planned line for the month" onClick={() => card({ action: "newline", bucket, label, amount: c.amount, txnId: c.txnId })}>Add to plan</button>
+          <button className={s.actGhost} disabled={busy} title="it's fine where it is — leave it" onClick={() => card({ action: "accept", txnId: c.txnId })}>Looks right</button>
+          {!parked && <button className={s.actGhost} disabled={busy} title="park it, decide later" onClick={() => card({ action: "review", txnId: c.txnId })}>Later</button>}
         </div>
-      ) : mode === "cat" ? (
-        <div className={s.chipPick}>
-          {cats.slice(0, 12).map((a) => (
-            <button key={a} className={s.catChip} disabled={busy} onClick={() => card({ action: "categorize", txnId: c.txnId, toAccount: a, makeRule: true })}>{leaf(a)}</button>
-          ))}
+      ) : mode === "shelf" ? (
+        <div className={s.moveRow}>
+          <select className={s.moveSel} value={to} onChange={(e) => { setTo(e.target.value); setCustom(""); }}>
+            <option value="">put on shelf…</option>
+            {shelfOpts.map((o) => <option key={o.account} value={o.account}>{o.name}</option>)}
+          </select>
+          <input className={s.moveNew} placeholder="or new shelf…" value={custom} onChange={(e) => setCustom(e.target.value)} />
+          <label className={s.moveRule}><input type="checkbox" checked={rule} onChange={(e) => setRule(e.target.checked)} /> rule</label>
+          <button className={s.moveGo} disabled={busy || (!to && !custom.trim())} onClick={doShelf}>Put</button>
           <button className={s.pickBack} onClick={() => setMode(null)}>✕</button>
         </div>
       ) : mode === "link" ? (
