@@ -32,6 +32,7 @@ export default function GameClient({ entity = "personal" }) {
   const [theme, setTheme] = useState("climb");
   const [tab, setTab] = useState("play"); // play | world | statement | status
   const [resetting, setResetting] = useState(false);
+  const [help, setHelp] = useState(0); // bump to (re)play the guided tour
   const ac = THEMES.find((t) => t.id === theme).ac;
 
   const TABS = [["play", "Play"], ["world", "World"], ["statement", "Statement"], ["status", "Status"]];
@@ -46,6 +47,7 @@ export default function GameClient({ entity = "personal" }) {
           ))}
         </div>
         <div className={s.topRight}>
+          <button className={s.helpBtn} title="How to play — replay the walkthrough" onClick={() => { setTab("play"); setHelp((h) => h + 1); }}>?</button>
           <button className={s.resetBtn} title="Reset game progress" onClick={() => setResetting(true)}>⟳</button>
           <div className={s.themeDots}>
             {THEMES.map((t) => (
@@ -62,6 +64,82 @@ export default function GameClient({ entity = "personal" }) {
         : <Status entity={entity} theme={theme} />}
 
       {resetting && <ResetDialog entity={entity} onClose={() => setResetting(false)} />}
+      <Tour enabled={tab === "play"} replay={help} />
+    </div>
+  );
+}
+
+/* ======================  THE FOREMAN — guided walkthrough  ================== */
+/* Spotlight coach-marks that step a first-timer through the board, then get out
+   of the way. Auto-runs once (localStorage), replayable from the ? button. Each
+   step highlights a real element by [data-tour] and floats a tip beside it. */
+const TOUR = [
+  { title: "Welcome to your warehouse", body: "I'm the Foreman — your guide. Six taps and you'll know how to play. I'll get out of your way after that.", cta: "Show me the ropes" },
+  { sel: '[data-tour="season"]', place: "below", title: "Your year", body: "Each tile is a month — a delivery of transactions. A gold dot means items are waiting. Tap one to open it." },
+  { sel: '[data-tour="head"]', place: "below", title: "What needs YOU", body: "The robot already sorted most of the pile. This big number is what's left for you to decide. The ring is how much of the month is matched." },
+  { sel: '[data-tour="quads"]', place: "above", title: "The shape of your month", body: "In vs out, fixed vs variable — planned → actual. Green is helping you, red is over. Your cashflow at a glance." },
+  { sel: '[data-tour="cards"]', place: "above", title: "The calls that need a person", body: "Each card is one transaction that needs your judgment — merchant, amount, where it came from. Categorize it, add it to your plan, accept, or park it — and every call teaches the game a rule for next time." },
+  { sel: '[data-tour="lock"]', place: "below", title: "Seal the month", body: "When nothing needs you, lock it to bank your streak. That's a full round." },
+  { title: "You're all set", body: "I'll keep a nudge on-screen telling you the single best next move. Tap ? up top to replay this anytime.", cta: "Start playing" },
+];
+function Tour({ enabled, replay }) {
+  const [active, setActive] = useState(false);
+  const [i, setI] = useState(0);
+  const [rect, setRect] = useState(null);
+
+  // auto-run once for a first-timer; replay when the ? button bumps `replay`
+  useEffect(() => {
+    if (!enabled) { setActive(false); return; }
+    let done = false;
+    try { done = localStorage.getItem("finops_tour_v1") === "1"; } catch {}
+    if (!done) { setI(0); setActive(true); }
+  }, [enabled]);
+  useEffect(() => { if (replay > 0) { setI(0); setActive(true); } }, [replay]);
+
+  // find + track the current step's target
+  const step = TOUR[i];
+  useEffect(() => {
+    if (!active) return;
+    if (!step.sel) { setRect(null); return; }
+    const measure = () => {
+      const el = document.querySelector(step.sel);
+      if (!el) { setRect(null); return; }
+      setRect(el.getBoundingClientRect());
+    };
+    const el = document.querySelector(step.sel);
+    if (el) el.scrollIntoView({ block: "center", behavior: "smooth" });
+    const t = setTimeout(measure, 260);
+    window.addEventListener("resize", measure); window.addEventListener("scroll", measure, true);
+    return () => { clearTimeout(t); window.removeEventListener("resize", measure); window.removeEventListener("scroll", measure, true); };
+  }, [active, i, step]);
+
+  const finish = () => { try { localStorage.setItem("finops_tour_v1", "1"); } catch {} setActive(false); };
+  if (!active) return null;
+  const last = i === TOUR.length - 1;
+  const pad = 8;
+  const hole = rect ? { top: rect.top - pad, left: rect.left - pad, width: rect.width + pad * 2, height: rect.height + pad * 2 } : null;
+  // tip position
+  let tip = { left: "50%", top: "50%", transform: "translate(-50%,-50%)" };
+  if (hole) {
+    const below = step.place !== "above" && hole.top + hole.height + 200 < window.innerHeight;
+    const left = Math.min(Math.max(hole.left, 14), window.innerWidth - 360);
+    tip = below ? { top: hole.top + hole.height + 12, left } : { top: Math.max(14, hole.top - 12), left, transform: "translateY(-100%)" };
+  }
+  return (
+    <div className={s.tourWrap}>
+      {hole ? <div className={s.tourHole} style={hole} /> : <div className={s.tourDim} />}
+      <div className={s.tourTip} style={tip}>
+        <button className={s.tourSkip} onClick={finish}>Skip</button>
+        <div className={s.tourHead}><span className={s.tourAv}>👷</span><b>{step.title}</b></div>
+        <p className={s.tourBody}>{step.body}</p>
+        <div className={s.tourFoot}>
+          <div className={s.tourDots}>{TOUR.map((_, k) => <span key={k} className={k === i ? s.tdOn : s.td} />)}</div>
+          <div className={s.tourBtns}>
+            {i > 0 && !step.cta && <button className={s.tourBack} onClick={() => setI(i - 1)}>Back</button>}
+            <button className={s.tourNext} onClick={() => last ? finish() : setI(i + 1)}>{step.cta || (last ? "Done" : "Next")}</button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -374,7 +452,7 @@ function SeasonStrip({ season, fy, setFy, month, setMonth }) {
   const played = season.months.filter((m) => m.hasData).length;
   const sc = season.scorecard;
   return (
-    <div className={s.season}>
+    <div className={s.season} data-tour="season">
       <div className={s.seasonHead}>
         <button className={s.fyStep} onClick={() => setFy(fy - 1)} aria-label="previous year">‹</button>
         <div className={s.fyLabel}>
@@ -451,6 +529,8 @@ function MonthBoard({ entity, month, onChanged }) {
     <div className={s.board}>
       <BoardHead board={board} onLock={lock} busy={busy} />
 
+      <NextHint board={board} onLock={lock} busy={busy} />
+
       {/* the four-quadrant cashflow board, reconciled: plan → reality */}
       {board.buckets && <Quadrants b={board.buckets} />}
 
@@ -471,7 +551,7 @@ function MonthBoard({ entity, month, onChanged }) {
           <span>{monLong(month)} reconciled to {board.coverage.plan}% of plan. {board.locked ? "Sealed." : "Lock it to bank the streak."}</span>
         </div>
       ) : (
-        <div className={s.cards}>
+        <div className={s.cards} data-tour="cards">
           {board.cards.map((c) => c.kind === "miss"
             ? <MissCard key={c.planLineId} c={c} busy={busy} card={card} />
             : <SurpriseCard key={c.txnId} c={c} misses={misses} cats={board.categories} busy={busy} card={card} />)}
@@ -513,7 +593,7 @@ function Quadrants({ b }) {
     );
   };
   return (
-    <div className={s.quads}>
+    <div className={s.quads} data-tour="quads">
       <div className={s.quadsGrid}>
         {Cell("fixed_in", "Fixed inflow", b.fixed_in, "in")}
         {Cell("var_in", "Variable inflow", b.var_in, "in")}
@@ -540,8 +620,9 @@ function Quadrants({ b }) {
 function BoardHead({ board, onLock, busy }) {
   const pct = board.coverage.plan;
   const R = 30, C = 2 * Math.PI * R, off = C * (1 - pct / 100);
+  const canLock = board.exceptions === 0 && !board.locked;
   return (
-    <div className={s.head}>
+    <div className={s.head} data-tour="head">
       <div className={s.dial}>
         <svg viewBox="0 0 72 72" className={s.dialSvg}>
           <circle cx="36" cy="36" r={R} className={s.dialTrack} />
@@ -560,10 +641,40 @@ function BoardHead({ board, onLock, busy }) {
       </div>
       <div className={s.headRight}>
         {board.streak > 0 && <div className={s.streak}>🔥 {board.streak}<small>streak</small></div>}
-        <button className={s.lockBtn} disabled={busy || board.locked} onClick={onLock}>
+        <button className={`${s.lockBtn} ${canLock ? s.lockReady : ""}`} data-tour="lock" disabled={busy || board.locked} onClick={onLock}>
           {board.locked ? "Sealed ✓" : board.exceptions === 0 ? "Lock month" : `Lock (${board.exceptions} open)`}
         </button>
       </div>
+    </div>
+  );
+}
+
+/* NEXT HINT — a persistent nudge that always names the single best next move,
+   so you (or anyone new) are never wondering what to do. */
+function NextHint({ board, onLock, busy }) {
+  const scrollCards = () => { const el = document.querySelector('[data-tour="cards"]'); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); };
+  if (board.exceptions > 0) {
+    return (
+      <button className={s.nextHint} onClick={scrollCards}>
+        <span className={s.nextDot} />
+        <span>Next: <b>{board.exceptions}</b> {board.exceptions === 1 ? "call needs" : "calls need"} you — decide where each belongs</span>
+        <span className={s.nextGo}>Go ↓</span>
+      </button>
+    );
+  }
+  if (!board.locked) {
+    return (
+      <button className={`${s.nextHint} ${s.nextHintGo}`} disabled={busy} onClick={onLock}>
+        <span className={s.nextDot} />
+        <span>Next: everything's matched — <b>seal {monLong(board.month)}</b> to bank your streak</span>
+        <span className={s.nextGo}>Lock →</span>
+      </button>
+    );
+  }
+  return (
+    <div className={`${s.nextHint} ${s.nextHintDone}`}>
+      <span className={s.nextDot} />
+      <span>Sealed 🔥 streak {board.streak}. Next: pick another month up top, or drop in a new statement.</span>
     </div>
   );
 }

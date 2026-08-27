@@ -513,3 +513,49 @@
 .rvBtn{ color:var(--win); } .rvBtnF{ color:var(--gold); }
 .rvBtn:hover{ border-color:var(--win); } .rvBtnF:hover{ border-color:var(--gold); }
 .rvBtn:disabled,.rvBtnF:disabled{ opacity:.5; }
+
+/* ============================================================= */
+/* ==========  THE FOREMAN — walkthrough + next-hints  ======== */
+/* ============================================================= */
+.helpBtn{ font:inherit; font-size:15px; font-weight:800; width:32px; height:32px; border-radius:9px; border:1px solid var(--line2); background:var(--panel); color:var(--ac); cursor:pointer; }
+.helpBtn:hover{ border-color:var(--ac); }
+
+/* spotlight coach-marks */
+.tourWrap{ position:fixed; inset:0; z-index:100; }
+.tourDim{ position:absolute; inset:0; background:rgba(6,7,10,.74); }
+.tourHole{ position:absolute; border-radius:12px; box-shadow:0 0 0 9999px rgba(6,7,10,.74); border:2px solid var(--ac); transition:top .28s ease,left .28s ease,width .28s ease,height .28s ease; pointer-events:none; }
+.tourTip{ position:absolute; width:342px; max-width:calc(100vw - 28px); background:linear-gradient(180deg,var(--panel),var(--panel2)); border:1px solid var(--ac);
+  border-radius:14px; padding:15px 16px 13px; box-shadow:0 24px 60px rgba(0,0,0,.6); z-index:101; }
+.tourSkip{ position:absolute; top:11px; right:13px; font:inherit; font-size:11px; color:var(--mut); background:transparent; border:0; cursor:pointer; }
+.tourSkip:hover{ color:var(--ink); }
+.tourHead{ display:flex; align-items:center; gap:10px; margin-bottom:8px; padding-right:38px; }
+.tourAv{ width:30px; height:30px; border-radius:9px; display:grid; place-items:center; font-size:16px; background:radial-gradient(circle at 40% 30%,color-mix(in srgb,var(--ac) 55%,transparent),transparent); border:1px solid var(--ac); flex-shrink:0; }
+.tourHead b{ font-size:15px; letter-spacing:-.01em; }
+.tourBody{ margin:0 0 13px; font-size:13px; color:var(--mut); line-height:1.55; }
+.tourFoot{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.tourDots{ display:flex; gap:5px; }
+.td,.tdOn{ width:6px; height:6px; border-radius:50%; background:var(--line2); transition:background .2s; }
+.tdOn{ background:var(--ac); }
+.tourBtns{ display:flex; gap:7px; }
+.tourBack{ font:inherit; font-size:12.5px; font-weight:600; color:var(--mut); background:transparent; border:1px solid var(--line2); border-radius:8px; padding:7px 12px; cursor:pointer; }
+.tourNext{ font:inherit; font-size:12.5px; font-weight:800; color:#12121a; background:var(--ac); border:0; border-radius:8px; padding:7px 16px; cursor:pointer; }
+
+/* persistent "what to do next" nudge */
+.nextHint{ display:flex; align-items:center; gap:11px; width:100%; text-align:left; margin-top:12px; font:inherit; font-size:13.5px; color:var(--ink); cursor:pointer;
+  background:linear-gradient(90deg,color-mix(in srgb,var(--ac) 13%,var(--panel)),var(--panel)); border:1px solid color-mix(in srgb,var(--ac) 42%,var(--line2)); border-radius:12px; padding:12px 15px; }
+.nextHint b{ color:var(--ac); font-variant-numeric:tabular-nums; }
+.nextHint:hover{ border-color:var(--ac); }
+.nextDot{ width:9px; height:9px; border-radius:50%; background:var(--ac); box-shadow:0 0 0 0 color-mix(in srgb,var(--ac) 60%,transparent); animation:npulse 1.8s infinite; flex-shrink:0; }
+@keyframes npulse{ 70%{ box-shadow:0 0 0 8px transparent } 100%{ box-shadow:0 0 0 0 transparent } }
+.nextGo{ margin-left:auto; font-weight:800; color:var(--ac); white-space:nowrap; }
+.nextHintGo{ background:linear-gradient(90deg,color-mix(in srgb,var(--win) 14%,var(--panel)),var(--panel)); border-color:color-mix(in srgb,var(--win) 45%,transparent); }
+.nextHintGo b{ color:var(--win); } .nextHintGo .nextDot{ background:var(--win); } .nextHintGo .nextGo{ color:var(--win); }
+.nextHintGo:disabled{ opacity:.6; }
+.nextHintDone{ cursor:default; background:var(--panel); border-color:var(--line2); color:var(--mut); }
+.nextHintDone .nextDot{ background:var(--win); animation:none; }
+
+/* lock button pulses when it's the recommended move */
+.lockReady{ animation:lockpulse 1.7s infinite; }
+@keyframes lockpulse{ 0%,100%{ box-shadow:0 0 0 0 color-mix(in srgb,var(--ac) 55%,transparent) } 50%{ box-shadow:0 0 0 7px transparent } }
+
+@media (prefers-reduced-motion:reduce){ .nextDot,.lockReady,.tourHole{ animation:none; transition:none } }
