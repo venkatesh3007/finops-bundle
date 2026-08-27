@@ -33,22 +33,28 @@ export default function GameClient({ entity = "personal" }) {
   const [tab, setTab] = useState("play"); // play | world | statement | status
   const [resetting, setResetting] = useState(false);
   const [help, setHelp] = useState(0); // bump to (re)play the guided tour
+  const [me, setMe] = useState(null);   // { caller } from /api/auth/me
   const ac = THEMES.find((t) => t.id === theme).ac;
 
+  useEffect(() => { fetch("/api/auth/me").then((r) => r.json()).then(setMe).catch(() => setMe({ caller: null })); }, []);
+
   const TABS = [["play", "Play"], ["world", "World"], ["statement", "Statement"], ["status", "Status"]];
+  // A signed-in customer whose warehouse is still empty gets onboarding, not a blank board.
+  const needsOnboard = me?.caller?.userId && !me.caller.hasData;
 
   return (
     <div className={s.app} data-theme={theme} style={{ "--ac": ac }}>
       <div className={s.top}>
         <div className={s.brand}>finops<span style={{ color: ac }}>·</span>play</div>
         <div className={s.tabs}>
-          {TABS.map(([id, label]) => (
+          {!needsOnboard && TABS.map(([id, label]) => (
             <button key={id} className={tab === id ? s.tabOn : s.tab} onClick={() => setTab(id)}>{label}</button>
           ))}
         </div>
         <div className={s.topRight}>
-          <button className={s.helpBtn} title="How to play — replay the walkthrough" onClick={() => { setTab("play"); setHelp((h) => h + 1); }}>?</button>
-          <button className={s.resetBtn} title="Reset game progress" onClick={() => setResetting(true)}>⟳</button>
+          {me?.caller?.email && <AccountChip email={me.caller.email} />}
+          {!needsOnboard && <button className={s.helpBtn} title="How to play — replay the walkthrough" onClick={() => { setTab("play"); setHelp((h) => h + 1); }}>?</button>}
+          {!needsOnboard && <button className={s.resetBtn} title="Reset game progress" onClick={() => setResetting(true)}>⟳</button>}
           <div className={s.themeDots}>
             {THEMES.map((t) => (
               <button key={t.id} title={t.name} className={theme === t.id ? s.dotOn : s.dot}
@@ -58,13 +64,123 @@ export default function GameClient({ entity = "personal" }) {
         </div>
       </div>
 
-      {tab === "play" ? <Play entity={entity} />
+      {needsOnboard ? <Onboard caller={me.caller} />
+        : tab === "play" ? <Play entity={entity} />
         : tab === "world" ? <World entity={entity} />
         : tab === "statement" ? <Ledger entity={entity} />
         : <Status entity={entity} theme={theme} />}
 
       {resetting && <ResetDialog entity={entity} onClose={() => setResetting(false)} />}
-      <Tour enabled={tab === "play"} replay={help} />
+      <Tour enabled={!needsOnboard && tab === "play"} replay={help} />
+    </div>
+  );
+}
+
+// Small identity chip + sign-out for signed-in customers.
+function AccountChip({ email }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ position: "relative" }}>
+      <button className={s.dot} title={email} onClick={() => setOpen((v) => !v)}
+        style={{ width: 26, height: 26, borderRadius: "50%", background: "var(--ac)", color: "#fff", fontWeight: 700, fontSize: 12, border: 0, cursor: "pointer" }}>
+        {email[0].toUpperCase()}
+      </button>
+      {open && (
+        <div style={{ position: "absolute", right: 0, top: 32, background: "var(--panel2,#1b1f2a)", border: "1px solid var(--line,#2c313d)", borderRadius: 10, padding: 10, minWidth: 190, zIndex: 50, boxShadow: "0 8px 30px rgba(0,0,0,.4)" }}>
+          <div style={{ fontSize: 12, color: "var(--muted,#9aa0ad)", marginBottom: 8, wordBreak: "break-all" }}>{email}</div>
+          <button onClick={() => fetch("/api/auth/logout", { method: "POST" }).then(() => (location.href = "/login"))}
+            style={{ width: "100%", padding: "7px 10px", borderRadius: 8, border: "1px solid var(--line,#2c313d)", background: "transparent", color: "var(--ink,#e7e9ee)", cursor: "pointer", fontSize: 13 }}>
+            Sign out
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The first-run screen: a fresh, empty warehouse. Two ways to fill it — a playable
+// demo, or the user's own first bank statement (CSV).
+function Onboard({ caller }) {
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  const [preview, setPreview] = useState(null); // { count, sample } from a dry-run
+
+  const name = (caller.name || caller.email || "there").split("@")[0];
+
+  async function loadSample() {
+    setErr(""); setBusy("sample");
+    try {
+      const j = await (await fetch("/api/onboard/sample", { method: "POST" })).json();
+      if (j.error) throw new Error(j.error);
+      location.reload();
+    } catch (e) { setErr(String(e.message || e)); setBusy(""); }
+  }
+
+  async function onFile(e) {
+    setErr(""); setPreview(null);
+    const f = e.target.files?.[0]; if (!f) return;
+    const csv = await f.text();
+    setBusy("preview");
+    try {
+      const j = await (await fetch("/api/onboard/csv", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ csv, preview: true }) })).json();
+      if (j.error) throw new Error(j.error);
+      setPreview({ csv, count: j.count, sample: j.sample || [] });
+    } catch (e) { setErr(String(e.message || e)); }
+    setBusy("");
+  }
+
+  async function confirmImport() {
+    setErr(""); setBusy("import");
+    try {
+      const j = await (await fetch("/api/onboard/csv", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ csv: preview.csv }) })).json();
+      if (j.error) throw new Error(j.error);
+      location.reload();
+    } catch (e) { setErr(String(e.message || e)); setBusy(""); }
+  }
+
+  return (
+    <div className={s.onboard}>
+      <div className={s.obCard}>
+        <div className={s.obKicker}>YOUR WAREHOUSE IS EMPTY</div>
+        <h1 className={s.obTitle}>Welcome, {name}.</h1>
+        <p className={s.obLead}>
+          finops turns your money into a warehouse you run. Bank statements arrive as <b>deliveries</b>;
+          a robot stacks the obvious ones; you sort the rest onto shelves. Let’s get your first crates in.
+        </p>
+
+        <div className={s.obGrid}>
+          <div className={s.obTile}>
+            <div className={s.obTileTop}>🏷️ Try it first</div>
+            <div className={s.obTileBody}>Load a 2-month sample warehouse — salary, rent, subscriptions, an unsorted pile, and one customer who owes you. Play immediately.</div>
+            <button className={s.obBtnGhost} disabled={!!busy} onClick={loadSample}>{busy === "sample" ? "Loading…" : "Load sample warehouse"}</button>
+          </div>
+
+          <div className={s.obTile}>
+            <div className={s.obTileTop}>📥 Your own statement</div>
+            <div className={s.obTileBody}>Upload a bank/card statement as CSV (date + amount, or debit/credit columns). Your real deliveries start stacking.</div>
+            {!preview ? (
+              <label className={s.obBtn} style={{ opacity: busy ? 0.6 : 1 }}>
+                {busy === "preview" ? "Reading…" : "Choose CSV file"}
+                <input type="file" accept=".csv,text/csv" style={{ display: "none" }} onChange={onFile} disabled={!!busy} />
+              </label>
+            ) : (
+              <div>
+                <div className={s.obPreview}>
+                  Found <b>{preview.count}</b> transactions.
+                  {preview.sample.slice(0, 3).map((r, i) => (
+                    <div key={i} className={s.obPvRow}><span>{r.date}</span><span className={s.obPvDesc}>{r.desc}</span><span>{r.amount < 0 ? "−" : "+"}₹{Math.abs(r.amount).toLocaleString("en-IN")}</span></div>
+                  ))}
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button className={s.obBtn} disabled={!!busy} onClick={confirmImport}>{busy === "import" ? "Importing…" : `Import ${preview.count} →`}</button>
+                  <button className={s.obBtnGhost} disabled={!!busy} onClick={() => setPreview(null)}>Pick another</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+        {err && <div className={s.obErr}>{err}</div>}
+      </div>
     </div>
   );
 }
