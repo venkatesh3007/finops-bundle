@@ -427,12 +427,16 @@ function monthOptions() {
 /* ===================================================================== */
 function World({ entity }) {
   const [w, setW] = useState(null);
+  const [counter, setCounter] = useState(null);
   const [busy, setBusy] = useState(false);
   const load = useCallback(async () => {
-    const j = await (await fetch(`/api/game/pack?entity=${entity}`)).json();
-    setW(j);
+    const [pj, cj] = await Promise.all([
+      fetch(`/api/game/pack?entity=${entity}`).then((r) => r.json()),
+      fetch(`/api/game/counter?entity=${entity}`).then((r) => r.json()).catch(() => null),
+    ]);
+    setW(pj); setCounter(cj);
   }, [entity]);
-  useEffect(() => { setW(null); load(); }, [load]);
+  useEffect(() => { setW(null); setCounter(null); load(); }, [load]);
 
   const quest = useCallback(async (body) => {
     setBusy(true);
@@ -440,14 +444,68 @@ function World({ entity }) {
     finally { setBusy(false); }
   }, [entity, load]);
 
+  const collect = useCallback(async (company) => {
+    setBusy(true);
+    try { const j = await (await fetch("/api/game/move", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "claim", company }) })).json(); if (!j.error) await load(); }
+    finally { setBusy(false); }
+  }, [load]);
+
   if (!w) return <div className={s.loading}>Loading your world…</div>;
   if (w.error) return <div className={s.loading}>⚠ {w.error}</div>;
+  const hasCounter = counter && !counter.error && counter.customers && counter.customers.length > 0;
   return (
     <div className={s.world}>
+      {hasCounter && <TheCounter counter={counter} busy={busy} collect={collect} />}
       <ThePack pack={w.pack} />
       <div className={s.worldGrid}>
         <TheLoot loot={w.loot} />
         <TheQuests quests={w.quests} busy={busy} quest={quest} />
+      </div>
+    </div>
+  );
+}
+
+// THE COUNTER — the payoff loop. Every customer you fronted for, the outstanding
+// total, and the itemized reimbursement statement a sorted warehouse answers instantly.
+function TheCounter({ counter, busy, collect }) {
+  const [open, setOpen] = useState(null);
+  return (
+    <div className={s.counter}>
+      <div className={s.counterHead}>
+        <div><h3>The Counter</h3><span className={s.packSub}>reimbursements you can collect — the payoff for a sorted warehouse</span></div>
+        <div className={s.counterTot}><b>{compact(counter.totalOwed)}</b><span>owed to you</span></div>
+      </div>
+      <div className={s.custGrid}>
+        {counter.customers.map((c) => {
+          const settled = c.outstanding <= 0;
+          const isOpen = open === c.company;
+          return (
+            <div key={c.company || c.account} className={`${s.cust} ${settled ? s.custSettled : ""}`}>
+              <div className={s.custTop}>
+                <b>{c.company || "—"}</b>
+                <span className={settled ? s.custZero : s.custOwed}>{settled ? "settled" : compact(c.outstanding)}</span>
+              </div>
+              <div className={s.custSub}>fronted {compact(c.fronted)} · came back {compact(c.reimbursed)} · {c.itemCount} items</div>
+              <div className={s.custActions}>
+                <button className={s.custBtn} onClick={() => setOpen(isOpen ? null : c.company)}>{isOpen ? "Hide statement" : "View statement"}</button>
+                {!settled && <button className={s.custCollect} disabled={busy} onClick={() => collect(c.company)}>{busy ? "…" : "Collect →"}</button>}
+              </div>
+              {isOpen && (
+                <div className={s.custItems}>
+                  {c.items.length === 0 && <div className={s.custEmpty}>No open items — fully reconciled.</div>}
+                  {c.items.map((it, i) => (
+                    <div className={s.custItem} key={i}>
+                      <span className={s.custDate}>{it.date}</span>
+                      <span className={s.custDesc}>{it.desc}</span>
+                      <b>{compact(it.amount)}</b>
+                      {it.doc && <a href={it.doc} target="_blank" rel="noreferrer" className={s.custDoc}>doc</a>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
