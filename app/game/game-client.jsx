@@ -578,32 +578,53 @@ function MonthBoard({ entity, month, onChanged }) {
 /* THE WAREHOUSE — shelves (categories/counterparties) stacked into floor-plan
    zones (your fixed/variable × in/out aisles). Tap a shelf to open its crates.
    This replaces the quadrant bars: same cashflow read, but you can see inside. */
+// turn a typed shelf name into an account under the same family as the source.
+function shelfToAccount(input, fromAccount) {
+  const s2 = input.trim(); if (!s2) return "";
+  if (s2.includes(":")) return s2;
+  const cap = s2.replace(/\b\w/g, (c) => c.toUpperCase()).replace(/\s+/g, "");
+  const prefix = fromAccount.startsWith("Assets:Receivable") ? "Assets:Receivable"
+    : fromAccount.startsWith("Assets:Investments") ? "Assets:Investments"
+    : fromAccount.split(":")[0];
+  return `${prefix}:${cap}`;
+}
 function Warehouse({ entity, month }) {
   const [w, setW] = useState(null);
   const [open, setOpen] = useState(null);
   const [crates, setCrates] = useState(null);
+  const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    setW(null); setOpen(null);
-    fetch(`/api/game/warehouse?entity=${entity}&month=${month}`).then((r) => r.json()).then(setW);
-  }, [entity, month]);
+  const loadW = useCallback(() => fetch(`/api/game/warehouse?entity=${entity}&month=${month}`).then((r) => r.json()).then(setW), [entity, month]);
+  useEffect(() => { setW(null); setOpen(null); loadW(); }, [entity, month, loadW]);
 
-  const drill = async (account) => {
-    if (open === account) { setOpen(null); return; }
-    setOpen(account); setCrates(null);
-    const [y, m] = month.split("-").map(Number);
-    const last = new Date(y, m, 0).getDate();
+  const loadCrates = useCallback(async (account) => {
+    setCrates(null);
+    const [y, m] = month.split("-").map(Number); const last = new Date(y, m, 0).getDate();
     const j = await (await fetch(`/api/txns?entity=${entity}&account=${encodeURIComponent(account)}&from=${month}-01&to=${month}-${String(last).padStart(2, "0")}&limit=40`)).json();
     setCrates(j.txns || []);
+  }, [entity, month]);
+
+  const drill = (account) => { if (open === account) { setOpen(null); return; } setOpen(account); loadCrates(account); };
+
+  // move a crate to another shelf — a reclassification (append-only correction).
+  const move = async (txnId, fromAccount, toAccount, makeRule) => {
+    if (!toAccount || toAccount === fromAccount) return;
+    setBusy(true);
+    try {
+      const j = await (await fetch("/api/game/move", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ entity, action: "reclassify", txnId, fromAccount, toAccount, makeRule }) })).json();
+      if (!j.error) { await loadW(); if (open) await loadCrates(open); }
+    } finally { setBusy(false); }
   };
 
   if (!w) return <div className={s.whLoading} data-tour="quads">Opening the warehouse…</div>;
   if (w.error) return <div className={s.whLoading} data-tour="quads">⚠ {w.error}</div>;
 
-  const inA = w.zones.filter((z) => z.dir === "in").reduce((s2, z) => s2 + z.actual, 0);
-  const outA = w.zones.filter((z) => z.dir === "out").reduce((s2, z) => s2 + z.actual, 0);
-  const inP = w.zones.filter((z) => z.dir === "in").reduce((s2, z) => s2 + z.planned, 0);
-  const outP = w.zones.filter((z) => z.dir === "out").reduce((s2, z) => s2 + z.planned, 0);
+  const inA = w.zones.filter((z) => z.dir === "in").reduce((a, z) => a + z.actual, 0);
+  const outA = w.zones.filter((z) => z.dir === "out").reduce((a, z) => a + z.actual, 0);
+  const inP = w.zones.filter((z) => z.dir === "in").reduce((a, z) => a + z.planned, 0);
+  const outP = w.zones.filter((z) => z.dir === "out").reduce((a, z) => a + z.planned, 0);
+  // every shelf across the room = the move targets.
+  const targets = [...new Map([...w.zones, ...w.side].flatMap((z) => z.shelves).filter((sh) => sh.account.startsWith("Income") || sh.account.startsWith("Expenses") || sh.account.startsWith("Assets:Receivable") || sh.account.startsWith("Assets:Investments")).map((sh) => [sh.account, sh])).values()];
 
   const Zone = (z, side) => (
     <div className={`${s.whzone} ${side ? s.whsideZone : (z.dir === "in" ? s.whin : s.whout)}`} key={z.key}>
@@ -620,7 +641,7 @@ function Warehouse({ entity, month }) {
         ))}
         {!z.shelves.length && <span className={s.whEmpty}>empty — nothing landed here</span>}
       </div>
-      {z.shelves.some((sh) => sh.account === open) && <Crates crates={crates} />}
+      {z.shelves.some((sh) => sh.account === open) && <Crates crates={crates} fromAccount={open} targets={targets} onMove={move} busy={busy} />}
     </div>
   );
 
@@ -639,16 +660,40 @@ function Warehouse({ entity, month }) {
     </div>
   );
 }
-function Crates({ crates }) {
+function Crates({ crates, fromAccount, targets, onMove, busy }) {
+  const [moving, setMoving] = useState(null);   // txnId with the move-picker open
+  const [pick, setPick] = useState("");
+  const [custom, setCustom] = useState("");
+  const [rule, setRule] = useState(true);
   if (!crates) return <div className={s.whCratesLoad}>opening…</div>;
-  if (!crates.length) return <div className={s.whCratesLoad}>no crates this month</div>;
+  if (!crates.length) return <div className={s.whCratesLoad}>no crates on this shelf</div>;
+  const opts = targets.filter((t) => t.account !== fromAccount);
+  const doMove = (id) => {
+    const to = custom.trim() ? shelfToAccount(custom, fromAccount) : pick;
+    onMove(id, fromAccount, to, rule); setMoving(null); setCustom(""); setPick("");
+  };
   return (
     <div className={s.whCrates}>
+      <div className={s.whCratesHint}>Tap <b>⇄</b> to move a crate to another shelf — it teaches a rule for next time.</div>
       {crates.slice(0, 14).map((c) => (
-        <div className={s.crate} key={c.id}>
-          <span className={s.crDate}>{c.date}</span>
-          <span className={s.crWho} title={c.narration || c.payee}>{c.narration || c.payee || "—"}</span>
-          <span className={s.crAmt}>{inr(Math.abs(c.amount))}</span>
+        <div key={c.id}>
+          <div className={s.crate}>
+            <span className={s.crDate}>{c.date}</span>
+            <span className={s.crWho} title={c.narration || c.payee}>{c.narration || c.payee || "—"}</span>
+            <span className={s.crAmt}>{inr(Math.abs(c.amount))}</span>
+            <button className={s.crMove} disabled={busy} title="move to another shelf" onClick={() => setMoving(moving === c.id ? null : c.id)}>⇄</button>
+          </div>
+          {moving === c.id && (
+            <div className={s.moveRow}>
+              <select className={s.moveSel} value={pick} onChange={(e) => { setPick(e.target.value); setCustom(""); }}>
+                <option value="">move to shelf…</option>
+                {opts.map((t) => <option key={t.account} value={t.account}>{t.name}</option>)}
+              </select>
+              <input className={s.moveNew} placeholder="or new shelf…" value={custom} onChange={(e) => setCustom(e.target.value)} />
+              <label className={s.moveRule}><input type="checkbox" checked={rule} onChange={(e) => setRule(e.target.checked)} /> rule</label>
+              <button className={s.moveGo} disabled={busy || (!pick && !custom.trim())} onClick={() => doMove(c.id)}>Move</button>
+            </div>
+          )}
         </div>
       ))}
       {crates.length > 14 && <div className={s.crMore}>+{crates.length - 14} more crates</div>}
