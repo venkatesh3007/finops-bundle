@@ -660,13 +660,34 @@ function Warehouse({ entity, month }) {
     </div>
   );
 }
+// Net out cancelling pairs (a correction against its original / a pass-through in
+// and straight back out) so the drill shows only the REAL crates that make up the
+// shelf total — not the book plumbing that sums to zero.
+function netOut(crates) {
+  const used = new Set();
+  for (let i = 0; i < crates.length; i++) {
+    if (used.has(i)) continue;
+    const a = Number(crates[i].amount);
+    if (a === 0) { used.add(i); continue; }
+    for (let j = i + 1; j < crates.length; j++) {
+      if (used.has(j)) continue;
+      const b = Number(crates[j].amount);
+      if (Math.sign(a) !== Math.sign(b) && Math.abs(Math.abs(a) - Math.abs(b)) < 1) { used.add(i); used.add(j); break; }
+    }
+  }
+  return crates.filter((_, i) => !used.has(i));
+}
 function Crates({ crates, fromAccount, targets, onMove, busy }) {
   const [moving, setMoving] = useState(null);   // txnId with the move-picker open
   const [pick, setPick] = useState("");
   const [custom, setCustom] = useState("");
   const [rule, setRule] = useState(true);
+  const [showPlumbing, setShowPlumbing] = useState(false);
   if (!crates) return <div className={s.whCratesLoad}>opening…</div>;
   if (!crates.length) return <div className={s.whCratesLoad}>no crates on this shelf</div>;
+  const real = netOut(crates);
+  const plumbing = crates.length - real.length;
+  const list = showPlumbing ? crates : real;
   const opts = targets.filter((t) => t.account !== fromAccount);
   const doMove = (id) => {
     const to = custom.trim() ? shelfToAccount(custom, fromAccount) : pick;
@@ -674,8 +695,10 @@ function Crates({ crates, fromAccount, targets, onMove, busy }) {
   };
   return (
     <div className={s.whCrates}>
-      <div className={s.whCratesHint}>Tap <b>⇄</b> to move a crate to another shelf — it teaches a rule for next time.</div>
-      {crates.slice(0, 14).map((c) => (
+      <div className={s.whCratesHint}>Tap <b>⇄</b> to move a crate to another shelf — it teaches a rule for next time.
+        {plumbing > 0 && <button className={s.plumbBtn} onClick={() => setShowPlumbing((x) => !x)}>{showPlumbing ? "hide" : "show"} {plumbing} netted-out {plumbing === 1 ? "entry" : "entries"}</button>}
+      </div>
+      {list.slice(0, 16).map((c) => (
         <div key={c.id}>
           <div className={s.crate}>
             <span className={s.crDate}>{c.date}</span>
@@ -696,7 +719,7 @@ function Crates({ crates, fromAccount, targets, onMove, busy }) {
           )}
         </div>
       ))}
-      {crates.length > 14 && <div className={s.crMore}>+{crates.length - 14} more crates</div>}
+      {list.length > 16 && <div className={s.crMore}>+{list.length - 16} more crates</div>}
     </div>
   );
 }
