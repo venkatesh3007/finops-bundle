@@ -1,8 +1,11 @@
 import { resolveReclassify, splitReclassify, addManualEntry, claimReimbursement, markReview } from "../../../../lib/moves";
+import { resolveEntity } from "../../../../lib/tenant";
 export const maxDuration = 60;
 export async function POST(req) {
   try {
-    const b = await req.json(); const { action, entity = "personal" } = b;
+    const b = await req.json(); const { action } = b;
+    const entity = await resolveEntity(req);
+    if (!entity) return Response.json({ error: "unauthorized" }, { status: 401 });
     let result;
     if (action === "reclassify") result = await resolveReclassify(entity, b);
     else if (action === "bulk") {  // reclassify many crates to one shelf in one call

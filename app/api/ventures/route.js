@@ -1,10 +1,12 @@
 import { query } from "../../../lib/db";
+import { resolveEntity } from "../../../lib/tenant";
 export const maxDuration = 60;
 
-// GET /api/ventures?entity=personal — list the owner's equity/venture holdings.
+// GET /api/ventures — list the owner's equity/venture holdings.
 export async function GET(req) {
   try {
-    const entity = new URL(req.url).searchParams.get("entity") || "personal";
+    const entity = await resolveEntity(req);
+    if (!entity) return Response.json({ error: "unauthorized" }, { status: 401 });
     const rows = await query(
       `select v.id, v.name, v.kind, v.value, v.monthly_return, v.note
          from ventures v join entities e on e.id=v.entity_id
@@ -17,7 +19,8 @@ export async function GET(req) {
 export async function POST(req) {
   try {
     const b = await req.json();
-    const entity = b.entity || "personal";
+    const entity = await resolveEntity(req);
+    if (!entity) return Response.json({ error: "unauthorized" }, { status: 401 });
     const ent = await query("select id from entities where slug=$1", [entity]);
     if (!ent.length) return Response.json({ error: "no entity" }, { status: 400 });
     if (!b.name) return Response.json({ error: "name required" }, { status: 400 });

@@ -1,4 +1,5 @@
 import { query } from "../../../lib/db";
+import { resolveEntity } from "../../../lib/tenant";
 export const maxDuration = 60;
 
 // GET /api/txns — the source of truth. Powers the sort PILE and every drill-down.
@@ -12,7 +13,8 @@ export const maxDuration = 60;
 export async function GET(req) {
   try {
     const q = Object.fromEntries(new URL(req.url).searchParams);
-    const entity = q.entity || "personal";
+    const entity = await resolveEntity(req);
+    if (!entity) return Response.json({ error: "unauthorized" }, { status: 401 });
     const ent = await query("select id from entities where slug=$1", [entity]);
     if (!ent.length) return Response.json({ error: "no entity" }, { status: 400 });
     const entId = ent[0].id;

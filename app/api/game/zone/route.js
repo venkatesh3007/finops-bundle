@@ -1,4 +1,5 @@
 import { query } from "../../../../lib/db";
+import { resolveEntity } from "../../../../lib/tenant";
 export const maxDuration = 60;
 
 // POST /api/game/zone  { entity, account, fixed } — move a shelf between the
@@ -6,7 +7,8 @@ export const maxDuration = 60;
 export async function POST(req) {
   try {
     const b = await req.json();
-    const entity = b.entity || "personal";
+    const entity = await resolveEntity(req);
+    if (!entity) return Response.json({ error: "unauthorized" }, { status: 401 });
     if (!b.account) return Response.json({ error: "account required" }, { status: 400 });
     const ent = await query("select id from entities where slug=$1", [entity]);
     if (!ent.length) return Response.json({ error: `no entity ${entity}` }, { status: 400 });

@@ -1,12 +1,26 @@
 import { NextResponse } from "next/server";
-// Single-passcode gate (APP_PASSCODE). /api/admin is token-gated separately; /api/health open.
+
+// Gate: allow the owner passcode (fo_auth) OR a signed-in session (fo_sess).
+// Edge can't verify the HMAC (no node crypto), so this is a coarse presence
+// check — resolveEntity() re-verifies the signature server-side, so a forged
+// fo_sess passes here but reaches no data (401 from the API).
+const OPEN = (p) =>
+  p === "/api/health" ||
+  p.startsWith("/api/admin") ||
+  p.startsWith("/api/auth") ||   // login / register / me / logout
+  p === "/login" ||
+  p === "/api/passcode";
+
 export function middleware(req) {
   const { pathname } = req.nextUrl;
-  if (pathname === "/api/health" || pathname.startsWith("/api/admin")) return NextResponse.next();
+  if (OPEN(pathname)) return NextResponse.next();
+
   const code = process.env.APP_PASSCODE;
-  if (!code) return NextResponse.next();
-  if (pathname === "/login" || pathname === "/api/passcode") return NextResponse.next();
-  if (req.cookies.get("fo_auth")?.value === code) return NextResponse.next();
+  const owner = code && req.cookies.get("fo_auth")?.value === code;
+  const session = !!req.cookies.get("fo_sess")?.value;
+  if (!code || owner || session) return NextResponse.next();
+
+  if (pathname.startsWith("/api/")) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const url = req.nextUrl.clone(); url.pathname = "/login"; url.search = "";
   return NextResponse.redirect(url);
 }

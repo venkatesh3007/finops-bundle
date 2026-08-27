@@ -1,4 +1,5 @@
 import { query, pool } from "../../../../lib/db";
+import { resolveEntity } from "../../../../lib/tenant";
 export const maxDuration = 60;
 
 // POST /api/game/reset  { entity, quests?:bool }
@@ -10,7 +11,8 @@ export const maxDuration = 60;
 export async function POST(req) {
   let b = {};
   try { b = await req.json(); } catch { /* empty body ok */ }
-  const entity = b.entity || "personal";
+  const entity = await resolveEntity(req);
+  if (!entity) return Response.json({ error: "unauthorized" }, { status: 401 });
   try {
     const ent = await query("select id from entities where slug=$1", [entity]);
     if (!ent.length) return Response.json({ error: `no entity ${entity}` }, { status: 400 });
