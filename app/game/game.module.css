@@ -517,7 +517,7 @@
 /* ============================================================= */
 /* ==========  THE FOREMAN — walkthrough + next-hints  ======== */
 /* ============================================================= */
-.helpBtn{ font:inherit; font-size:15px; font-weight:800; width:32px; height:32px; border-radius:9px; border:1px solid var(--line2); background:var(--panel); color:var(--ac); cursor:pointer; }
+.helpBtn{ display:inline-flex; align-items:center; justify-content:center; text-decoration:none; font:inherit; font-size:15px; font-weight:800; width:32px; height:32px; border-radius:9px; border:1px solid var(--line2); background:var(--panel); color:var(--ac); cursor:pointer; }
 .helpBtn:hover{ border-color:var(--ac); }
 
 /* spotlight coach-marks */
