@@ -58,6 +58,8 @@ export default function ImportClient() {
   const [phase, setPhase] = useState("pick"); // pick | parsed | classifying | ready | importing | done
   const [progress, setProgress] = useState("");
   const [result, setResult] = useState(null);
+  const [queue, setQueue] = useState([]);       // multiple statements uploaded at once
+  const [queueIdx, setQueueIdx] = useState(0);  // which one is on screen now
   const [rulesText, setRulesText] = useState("");
   const [rulesStatus, setRulesStatus] = useState("");
   const [rulesOpen, setRulesOpen] = useState(false);
@@ -141,6 +143,23 @@ export default function ImportClient() {
         ? `${parsed.rows.length} rows via ${parsed.method} · ${ruled.length - need} classified by your rules/history · ${need} for the model`
         : `⚠ Could not find transactions: ${parsed.note}`);
     } catch (e) { setPhase("pick"); setProgress(`⚠ ${e.message}`); }
+  };
+
+  // Upload several statements at once → a queue; the current one is on screen,
+  // the rest wait. After each import (or a manual skip) we advance to the next,
+  // so the whole batch is analysed one at a time without re-picking files.
+  const onFiles = (files) => {
+    const arr = Array.from(files || []);
+    if (!arr.length) return;
+    setQueue(arr);
+    setQueueIdx(0);
+    onFile(arr[0]);
+  };
+  const goToStatement = (idx) => {
+    if (idx < 0 || idx >= queue.length) return;
+    setQueueIdx(idx);
+    setResult(null);
+    onFile(queue[idx]);
   };
 
   const classifyWithModel = async () => {
@@ -280,8 +299,30 @@ export default function ImportClient() {
         </section>
 
         <section className={s.panel}>
-          <h3 className={s.pH}>2 · Statement file</h3>
-          <input type="file" accept=".pdf,.csv,.xlsx,.xls,.txt" onChange={(e) => onFile(e.target.files?.[0])} disabled={!ctx || phase === "classifying" || phase === "importing"} />
+          <h3 className={s.pH}>2 · Statement file<span className={s.side}>upload one or many</span></h3>
+          <input type="file" multiple accept=".pdf,.csv,.xlsx,.xls,.txt" onChange={(e) => onFiles(e.target.files)} disabled={!ctx || phase === "classifying" || phase === "importing"} />
+          {queue.length > 1 && (
+            <div className={s.row} style={{ flexWrap: "wrap", gap: 6, alignItems: "center", marginTop: 8 }}>
+              <span className={s.muted} style={{ fontSize: 12 }}>Statement {queueIdx + 1} of {queue.length}:</span>
+              {queue.map((f, i) => (
+                <button
+                  key={i}
+                  onClick={() => goToStatement(i)}
+                  disabled={phase === "classifying" || phase === "importing"}
+                  title={f.name}
+                  style={{
+                    fontSize: 12, padding: "2px 8px", borderRadius: 999, cursor: "pointer",
+                    border: `1px solid ${i === queueIdx ? "var(--ac, #2a78d6)" : "var(--bd, #333)"}`,
+                    background: i === queueIdx ? "var(--ac, #2a78d6)" : "transparent",
+                    color: i === queueIdx ? "#fff" : "inherit",
+                    opacity: result?.ok && i < queueIdx ? 0.5 : 1,
+                  }}
+                >
+                  {i + 1}{result?.ok && i === queueIdx ? " ✓" : ""}
+                </button>
+              ))}
+            </div>
+          )}
           {acct && (
             <div className={s.row}>
               <span className={s.lbl}>Posts to</span>
@@ -415,7 +456,13 @@ export default function ImportClient() {
               <div className={s.ok}>
                 <b>Imported.</b> {result.appended} entries appended · {result.skipped_dupes} duplicates skipped · {result.flagged} flagged for review
                 {result.assertion && <div className={s.muted}>closing assertion {inr(result.assertion.expected)} on {result.assertion.date} — {result.assertion.ok ? "reconciles ✓" : `off by ${inr(result.assertion.diff)} (recorded)`}</div>}
-                <div><a href="/game">Open the board →</a></div>
+                {queueIdx + 1 < queue.length ? (
+                  <div style={{ marginTop: 6 }}>
+                    <button className={s.btn} onClick={() => goToStatement(queueIdx + 1)}>Next statement ({queueIdx + 2} of {queue.length}) →</button>
+                  </div>
+                ) : (
+                  <div><a href="/game">Open the board →</a></div>
+                )}
               </div>
             )}
           </section>
