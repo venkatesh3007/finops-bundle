@@ -36,12 +36,14 @@ async function parseFile(file) {
     const pdfjs = await import("pdfjs-dist");
     pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs"; // copied to public/ on postinstall (uses import.meta; can't be bundled)
     const doc = await pdfjs.getDocument({ data: new Uint8Array(buf) }).promise;
-    const lines = [];
+    const lines = [], pages = [];
     for (let p = 1; p <= doc.numPages; p++) {
       const page = await doc.getPage(p);
-      lines.push(...pdfItemsToLines((await page.getTextContent()).items), "");
+      const pl = pdfItemsToLines((await page.getTextContent()).items);
+      pages.push(pl.join("\n"));           // per-page text, for AI extraction (chunked by page)
+      lines.push(...pl, "");
     }
-    parsed = parsePdfLines(lines); method = `pdf (${doc.numPages} pages)`;
+    parsed = parsePdfLines(lines); parsed.pages = pages; method = `pdf (${doc.numPages} pages)`;
   } else throw new Error(`unsupported file type .${ext} — use PDF, CSV or XLSX`);
   return { name, bytes: buf.byteLength, sha256, method, ...parsed };
 }
@@ -145,6 +147,36 @@ export default function ImportClient() {
     setPhase("ready"); setProgress(`Done — ${todo.length} rows classified by the model on-device.`);
   };
 
+  // Extract with a frontier model via the aikaara gateway. It returns SIGNED
+  // amounts + a running balance; a server-side reconciler verifies the numbers
+  // against that balance, so we surface whether it reconciled. We NEVER re-sign
+  // AI output (unlike the heuristic path) — the model already got the direction.
+  const [extractRec, setExtractRec] = useState(null);
+  const extractWithAI = async () => {
+    if (!file?.pages?.length) { setProgress("AI extraction works on PDF statements."); return; }
+    setPhase("parsing"); setExtractRec(null); setProgress("Extracting with the frontier model (via the aikaara gateway)…");
+    try {
+      const j = await (await fetch("/api/statements/extract", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ pages: file.pages, filename: file.name, bank: acct?.name }),
+      })).json();
+      if (j.error) {
+        setProgress(j.error === "extract_not_configured"
+          ? "⚠ AI extraction isn't switched on yet — configure the gateway routing client + set AIKAARA_GATEWAY_URL/KEY."
+          : `⚠ ${j.message || j.error}`);
+        setPhase("parsed"); return;
+      }
+      const txns = j.transactions || [];
+      const normalized = txns.map((t, i) => ({ date: t.date, desc: t.description, amount: t.amount, balance: t.balance, i: i + 1 }));
+      const ruled = normalized.map((r) => classifyByRules(r, ctx));
+      setRows(ruled); setExtractRec(j.reconciliation || null);
+      const need = ruled.filter((r) => !r.account).length;
+      setPhase("parsed");
+      const rec = j.reconciliation;
+      setProgress(`AI extracted ${txns.length} rows · ${rec?.reconciled ? "✓ balance-verified" : `⚠ ${rec?.note || "not balance-verified — review"}`} · ${ruled.length - need} auto-classified · ${need} for the model/picker`);
+    } catch (e) { setProgress(`⚠ extract error: ${e.message}`); setPhase("parsed"); }
+  };
+
   const finalRows = useMemo(() => rows.map((r) => ({ ...r, flag: r.account ? flagFor(r) : "!" })), [rows]);
   const sum = useMemo(() => (finalRows.length ? summary(finalRows) : null), [finalRows]);
 
@@ -239,6 +271,13 @@ export default function ImportClient() {
           {rows.length > 0 && rows.some((r) => !r.account) && phase !== "classifying" && (
             <button className={s.btn} onClick={classifyWithModel}>Classify {rows.filter((r) => !r.account).length} remaining rows with the model</button>
           )}
+          {file?.pages?.length > 0 && phase !== "classifying" && phase !== "importing" && (
+            <button className={s.btn} onClick={extractWithAI}
+              title="Sends the statement text to a frontier model via the aikaara gateway; every amount is verified against the running balance before it's trusted."
+              style={{ background: "var(--ac, #2a78d6)", color: "#fff" }}>
+              ✦ Extract with AI — handles any layout, balance-verified
+            </button>
+          )}
         </section>
       </div>
 
@@ -252,6 +291,7 @@ export default function ImportClient() {
             <div>net <b>{inr(sum.net)}</b></div>
             {sum.closing_balance != null && <div>closing <b>{inr(sum.closing_balance)}</b></div>}
             <div className={sum.needs_review ? s.warn : ""}>{sum.needs_review} need review</div>
+            {extractRec && <div className={extractRec.reconciled ? s.pos : s.warn} title={extractRec.note || ""}>{extractRec.reconciled ? "✓ balance-reconciled" : `⚠ ${extractRec.continuity?.mismatches?.length || 0} balance breaks`}</div>}
             <div className={s.muted}>{Object.entries(sum.classified_by).map(([k, v]) => `${k} ${v}`).join(" · ")}</div>
           </div>
           <div className={s.tableWrap}>
