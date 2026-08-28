@@ -11,7 +11,7 @@ export async function POST(req) {
   try {
     const entity = await resolveEntity(req);
     if (!entity) return Response.json({ error: "unauthorized" }, { status: 401 });
-    if (!extractConfigured()) return Response.json({ error: "extract_not_configured", message: "AI extraction isn't switched on — set ANTHROPIC_API_KEY in the app env." }, { status: 503 });
+    if (!extractConfigured()) return Response.json({ error: "extract_not_configured", message: "AI extraction isn't switched on — set AIKAARA_GATEWAY_URL + AIKAARA_TENANT_KEY (from a dashboard routing client) in the app env." }, { status: 503 });
 
     const b = await req.json();
     const pages = Array.isArray(b.pages) ? b.pages.map((p) => String(p || "")) : null;
