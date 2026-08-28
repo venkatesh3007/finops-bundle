@@ -1,12 +1,18 @@
-import GameClient from "./game/game-client";
+"use client";
+import { useEffect } from "react";
 
-// Root serves the board DIRECTLY with a 200 rather than redirecting to /game.
-// A bare redirect at `/` (the previous next.config rule) returns 307, and a
-// live-preview readiness probe that expects a 2xx treats that as "not up yet"
-// and waits forever. Serving real content at `/` also cuts one hop for users.
-export const dynamic = "force-dynamic";
-
-export default function Home({ searchParams }) {
-  const entity = (searchParams?.entity || "personal").toString();
-  return <GameClient entity={entity} />;
+// Lightweight root. A live-preview readiness probe hits `/` and needs a FAST 2xx.
+// Rendering the full board here put a heavy on-demand compile on the health-check
+// path, which stalled the workspace boot (the probe kept hitting `/` mid-compile).
+// So `/` is a tiny client page that returns 200 immediately and redirects to the
+// app; users and the preview iframe land on /game right away.
+export default function Home() {
+  useEffect(() => {
+    window.location.replace("/game" + (window.location.search || ""));
+  }, []);
+  return (
+    <main style={{ minHeight: "100vh", display: "grid", placeItems: "center", fontFamily: "system-ui, sans-serif", color: "#667", background: "#0b0b0d" }}>
+      <div style={{ opacity: 0.7, fontSize: 14 }}>Loading finops…</div>
+    </main>
+  );
 }
