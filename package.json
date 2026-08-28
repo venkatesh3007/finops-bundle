@@ -2,7 +2,7 @@
   "name": "finops",
   "private": true,
   "scripts": {
-    "dev": "NEXT_TELEMETRY_DISABLED=1 next dev",
+    "dev": "NEXT_TELEMETRY_DISABLED=1 WATCHPACK_POLLING=true CHOKIDAR_USEPOLLING=true next dev",
     "build": "node scripts/vendor.mjs && NODE_ENV=production next build",
     "start": "next start",
     "postinstall": "node scripts/vendor.mjs"
