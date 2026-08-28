@@ -58,6 +58,9 @@ export default function ImportClient() {
   const [phase, setPhase] = useState("pick"); // pick | parsed | classifying | ready | importing | done
   const [progress, setProgress] = useState("");
   const [result, setResult] = useState(null);
+  const [rulesText, setRulesText] = useState("");
+  const [rulesStatus, setRulesStatus] = useState("");
+  const [rulesOpen, setRulesOpen] = useState(false);
   const [chat, setChat] = useState([]);
   const [q, setQ] = useState("");
   const [thinking, setThinking] = useState(false);
@@ -68,8 +71,19 @@ export default function ImportClient() {
 
   // the server resolves WHICH book from the session — the page never names an entity
   useEffect(() => {
-    fetch("/api/statements/context").then((r) => r.json()).then((j) => { if (j.error) setProgress(`⚠ ${j.error}`); else setCtxRaw(j); });
+    fetch("/api/statements/context").then((r) => r.json()).then((j) => { if (j.error) setProgress(`⚠ ${j.error}`); else { setCtxRaw(j); setRulesText(j.rules || ""); } });
   }, []);
+
+  // Persist the operator's extraction rules; the extract route reads them
+  // server-side and appends them to the prompt on every future statement.
+  const saveRules = async () => {
+    setRulesStatus("saving…");
+    try {
+      const r = await (await fetch("/api/statements/rules", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ rules: rulesText }) })).json();
+      if (r.error) setRulesStatus(`⚠ ${r.error}`);
+      else { setRulesStatus("saved ✓ — applied on your next extraction"); setCtxRaw((c) => (c ? { ...c, rules: r.rules } : c)); }
+    } catch (e) { setRulesStatus(`⚠ ${e.message}`); }
+  };
   const entity = ctxRaw?.entity || "";
 
   // ── worker lifecycle ──
@@ -179,6 +193,14 @@ export default function ImportClient() {
 
   const finalRows = useMemo(() => rows.map((r) => ({ ...r, flag: r.account ? flagFor(r) : "!" })), [rows]);
   const sum = useMemo(() => (finalRows.length ? summary(finalRows) : null), [finalRows]);
+  // Rows whose running balance doesn't chain (reconciler flagged them by index;
+  // row.i is that index + 1). Marked ⚠ in the table so they're reviewable, with
+  // the expected-vs-printed balance in a tooltip.
+  const breakInfo = useMemo(() => {
+    const m = new Map();
+    for (const mm of extractRec?.continuity?.mismatches || []) m.set(mm.index + 1, mm);
+    return m;
+  }, [extractRec]);
 
   const setRowAccount = (i, account) => setRows((rs) => rs.map((r) => (r.i === i ? { ...r, account, source: "manual", rule: "manual", confidence: 1 } : r)));
 
@@ -278,6 +300,32 @@ export default function ImportClient() {
               ✦ Extract with AI — handles any layout, balance-verified
             </button>
           )}
+          <div style={{ marginTop: 12, borderTop: "1px solid var(--bd, #2a2a2a)", paddingTop: 10 }}>
+            <button
+              onClick={() => setRulesOpen((o) => !o)}
+              style={{ background: "none", border: "none", color: "var(--ac, #2a78d6)", cursor: "pointer", padding: 0, fontSize: 13 }}
+            >
+              {rulesOpen ? "▾" : "▸"} Rules the extractor remembers{rulesText.trim() ? " · active" : ""}
+            </button>
+            {rulesOpen && (
+              <div style={{ marginTop: 8 }}>
+                <p className={s.muted} style={{ fontSize: 12, margin: "0 0 6px" }}>
+                  Tell the AI how to handle this account's statements — e.g. “For foreign-currency card rows, use the INR (home) amount, not the foreign figure.” Saved for this account and applied to every future extraction, so a correction told once keeps working.
+                </p>
+                <textarea
+                  value={rulesText}
+                  onChange={(e) => setRulesText(e.target.value)}
+                  rows={4}
+                  placeholder="One rule per line…"
+                  style={{ width: "100%", boxSizing: "border-box", fontFamily: "inherit", fontSize: 13, padding: 8, borderRadius: 6, border: "1px solid var(--bd, #333)", background: "var(--bg2, #111)", color: "inherit", resize: "vertical" }}
+                />
+                <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
+                  <button className={s.btn} onClick={saveRules}>Save rules</button>
+                  {rulesStatus && <span className={s.muted} style={{ fontSize: 12 }}>{rulesStatus}</span>}
+                </div>
+              </div>
+            )}
+          </div>
         </section>
       </div>
 
@@ -291,16 +339,26 @@ export default function ImportClient() {
             <div>net <b>{inr(sum.net)}</b></div>
             {sum.closing_balance != null && <div>closing <b>{inr(sum.closing_balance)}</b></div>}
             <div className={sum.needs_review ? s.warn : ""}>{sum.needs_review} need review</div>
-            {extractRec && <div className={extractRec.reconciled ? s.pos : s.warn} title={extractRec.note || ""}>{extractRec.reconciled ? "✓ balance-reconciled" : `⚠ ${extractRec.continuity?.mismatches?.length || 0} balance breaks`}</div>}
+            {extractRec && <div className={extractRec.reconciled ? s.pos : s.warn} title={extractRec.note || ""}>{extractRec.reconciled ? "✓ balance-reconciled" : `⚠ ${extractRec.continuity?.mismatches?.length || 0} balance breaks — marked ⚠ below`}</div>}
             <div className={s.muted}>{Object.entries(sum.classified_by).map(([k, v]) => `${k} ${v}`).join(" · ")}</div>
           </div>
           <div className={s.tableWrap}>
             <table className={s.table}>
               <thead><tr><th>#</th><th>Date</th><th>Description</th><th className={s.r}>Amount</th><th>Account</th><th>How</th></tr></thead>
               <tbody>
-                {finalRows.map((r) => (
-                  <tr key={r.i} className={r.flag === "!" ? s.flag : ""}>
-                    <td className={s.muted}>{r.i}</td>
+                {finalRows.map((r) => {
+                  const brk = breakInfo.get(r.i);
+                  return (
+                  <tr key={r.i} className={r.flag === "!" ? s.flag : ""} style={brk ? { boxShadow: "inset 3px 0 0 0 #d97706" } : undefined}>
+                    <td className={s.muted}>
+                      {r.i}
+                      {brk && (
+                        <span
+                          style={{ color: "#d97706", cursor: "help", marginLeft: 4 }}
+                          title={`Balance break — expected ${inr(brk.expected_balance)} (prev ${inr(brk.prev_balance)} ${brk.amount < 0 ? "−" : "+"} ${inr(Math.abs(brk.amount))}) but the statement prints ${inr(brk.printed_balance)}, off by ${inr(brk.off_by)}. Check this row's amount/balance against the PDF.`}
+                        >⚠</span>
+                      )}
+                    </td>
                     <td className={s.nowrap}>{r.date}</td>
                     <td title={r.desc}><b>{r.payee}</b><div className={s.desc}>{r.desc}</div></td>
                     <td className={`${s.r} ${r.amount < 0 ? s.neg : s.pos}`}>{inr(r.amount)}</td>
@@ -312,7 +370,8 @@ export default function ImportClient() {
                     </td>
                     <td><span className={`${s.chip} ${s["src_" + (r.source || "none")]}`} title={r.rule || ""}>{r.source || "?"}{r.confidence ? ` ${Math.round(r.confidence * 100)}%` : ""}</span></td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

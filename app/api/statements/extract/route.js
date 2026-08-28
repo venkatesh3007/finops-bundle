@@ -1,5 +1,6 @@
 import { resolveEntity } from "../../../../lib/tenant";
 import { extractStatement, extractConfigured } from "../../../../lib/statements/extract";
+import { extractionRules } from "../../../../lib/statements-import";
 
 export const maxDuration = 300; // multi-chunk frontier extraction of a large statement
 
@@ -20,7 +21,10 @@ export async function POST(req) {
     const total = (pages ? pages.join("") : text).length;
     if (total > 4_000_000) return Response.json({ error: "statement text too large (4 MB max)" }, { status: 400 });
 
-    const out = await extractStatement({ pages, text, filename: b.filename || "", bank: b.bank || "", period: b.period || null });
+    // The operator's persisted rules are read server-side (their own entity) and
+    // appended to the extraction prompt, so a correction told once keeps applying.
+    const rules = await extractionRules(entity).catch(() => "");
+    const out = await extractStatement({ pages, text, filename: b.filename || "", bank: b.bank || "", period: b.period || null, rules });
     if (out.error) return Response.json(out, { status: out.error === "extract_not_configured" ? 503 : 502 });
     return Response.json(out);
   } catch (e) {
