@@ -136,3 +136,6 @@
 .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 .chipBtn { font: inherit; font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); cursor: pointer; }
 .chipBtn:hover { color: var(--ink); border-color: var(--ink); }
+.fixBtn { font: inherit; font-size: 13.5px; font-weight: 600; padding: 0 16px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); cursor: pointer; white-space: nowrap; }
+.fixBtn:hover:not(:disabled) { border-color: var(--good); color: var(--good-text); }
+.fixBtn:disabled { opacity: .45; cursor: default; }

@@ -377,6 +377,18 @@ function Detail({ id, onClose, onChanged }) {
   );
 }
 
+// Does this answer's DATA show a parsing problem worth offering a fix for?
+// Read from the computed result, not from how the question was phrased.
+function hasParseProblem(a) {
+  const r = a?.result?.result;
+  if (!r) return false;
+  if (a.result.op === "overview") return (r.total_breaks || 0) > 0 || (r.envelope_off || 0) > 0;
+  if (a.result.op === "breaks") return (a.result.matched || 0) > 0;
+  if (a.result.op === "explain_statement") return !!(r.breaks || (r.envelope && !r.envelope.ok) || r.error);
+  if (a.result.op === "statements") return Array.isArray(r) && r.some((x) => x.breaks > 0 || !x.reconciled);
+  return false;
+}
+
 // ── The one box ─────────────────────────────────────────────────────────────
 // Say what's wrong with how your statements came out. It reads back every
 // statement you've already parsed, works out what's actually going wrong,
@@ -450,7 +462,11 @@ function ParserFix({ count, onReparsed }) {
           placeholder={`"which statements don't add up?" · "why does the April one have breaks?" · "how much did I spend on Swiggy?" · "am I missing any months?" — or tell me what's wrong: "it skips the rows after the summary box"`}
         />
         <button className={s.askBtn} type="submit" disabled={!text.trim() || !!busy}>
-          {busy === "asking" ? "…" : busy === "fixing" ? "Rewriting…" : "Ask"}
+          {busy === "asking" ? "…" : "Ask"}
+        </button>
+        <button className={s.fixBtn} type="button" disabled={!!busy} onClick={() => run(text)}
+          title="Rewrite the parser's own code. Describe the problem above, or leave it empty and it fixes whatever it finds worst.">
+          {busy === "fixing" ? "Rewriting the parser…" : "Fix the parser"}
         </button>
       </form>
       <div className={s.chips}>
@@ -470,10 +486,10 @@ function ParserFix({ count, onReparsed }) {
                 <code>query {JSON.stringify(a.query)}</code>
                 <pre>{JSON.stringify(a.result, null, 1).slice(0, 4000)}</pre>
               </details>
-              {a.intent === "complaint" && (
+              {(a.intent === "complaint" || hasParseProblem(a)) && (
                 <div className={s.fixRow}>
                   <button className={s.btnPrimary} onClick={() => run(a.q)} disabled={!!busy}>
-                    {busy === "fixing" ? "Rewriting the parser…" : "Rewrite the parser to fix this"}
+                    {busy === "fixing" ? "Rewriting the parser…" : a.intent === "complaint" ? "Rewrite the parser to fix this" : "Rewrite the parser to fix these"}
                   </button>
                   <span className={s.muted}>Re-reads your statements, rewrites the parser, keeps the change only if nothing gets worse. A few minutes.</span>
                 </div>
