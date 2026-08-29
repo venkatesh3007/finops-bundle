@@ -431,7 +431,8 @@ function ParserFix({ count, onReparsed }) {
               {busy === "fixing" ? "Reading your statements and rewriting the parser…" : "Fix the parser"}
             </button>
             <span className={s.muted}>
-              It re-reads your parsed statements, rewrites the parser, and keeps the change only if every statement gets the same or better. Takes a few minutes.
+              It re-reads a sample of your parsed statements — the worst ones, plus a couple that currently parse cleanly as guards —
+              rewrites the parser, and keeps the change only if every one of them gets the same or better. Takes a few minutes.
             </span>
           </div>
         </>
@@ -443,6 +444,7 @@ function ParserFix({ count, onReparsed }) {
             <>
               <b>{res.promoted ? `Parser updated to v${res.version}.` : res.no_corpus ? "Nothing to learn from yet." : "Parser unchanged."}</b>{" "}
               {res.message}
+              {res.corpus && <div className={s.muted}>Graded on {res.corpus.graded} of your {res.corpus.total} statements ({res.corpus.problems} with problems, {res.corpus.guards} clean as guards).</div>}
               {res.diagnosis && <div className={s.diag}><b>What I found:</b> {res.diagnosis}</div>}
               {(res.improvements || []).length > 0 && (
                 <ul className={s.list}>{res.improvements.map((i, n) => <li key={n} className={s.pos}>{i.why}</li>)}</ul>
