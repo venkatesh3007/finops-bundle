@@ -122,3 +122,7 @@
 .fixRow { display: flex; align-items: center; gap: 12px; margin-top: 8px; flex-wrap: wrap; }
 .diag { margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: var(--surface); font-size: 12.5px; line-height: 1.5; }
 .list { margin: 8px 0 0; padding-left: 20px; font-size: 12.5px; line-height: 1.6; }
+.answer { margin-top: 10px; padding: 12px 14px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); }
+.askedQ { font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
+.askedQ::before { content: "you asked: "; }
+.answerText { font-size: 13.5px; line-height: 1.6; white-space: pre-wrap; }

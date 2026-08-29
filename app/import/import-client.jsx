@@ -381,15 +381,35 @@ function ParserFix({ count, onReparsed }) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState("");
   const [res, setRes] = useState(null);
+  const [answers, setAnswers] = useState([]);
   const [reparse, setReparse] = useState(null);
 
-  const run = async () => {
-    if (!text.trim() || busy) return;
+  // One box. A question is answered from computed data straight away; a report
+  // of something parsing wrong is answered too, then offers the parser rewrite —
+  // that costs minutes and gateway calls, so it is never fired without a click.
+  const ask = async () => {
+    const q = text.trim();
+    if (!q || busy) return;
+    setBusy("asking"); setRes(null);
+    try {
+      const j = await (await fetch("/api/statements/ask-all", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ question: q }),
+      })).json();
+      setAnswers((a) => [...a, { q, ...j }]);
+      if (!j.error) setText("");
+    } catch (e) { setAnswers((a) => [...a, { q, error: e.message }]); }
+    setBusy("");
+  };
+
+  const run = async (complaint) => {
+    if (busy) return;
     setBusy("fixing"); setRes(null); setReparse(null);
+    const text = complaint;
     try {
       const j = await (await fetch("/api/extractor/improve", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ complaint: text }),
+        body: JSON.stringify({ complaint }),
       })).json();
       setRes(j);
       if (j.promoted) setText("");
@@ -413,30 +433,54 @@ function ParserFix({ count, onReparsed }) {
     <section className={s.fixBox}>
       {!open ? (
         <button className={s.fixTrigger} onClick={() => setOpen(true)}>
-          ✎ Something parsed wrong? Tell the parser — it'll fix its own code
+          ✎ Ask anything about your statements — or say what parsed wrong
         </button>
       ) : (
         <>
           <div className={s.fixHead}>
-            <b>What did the parser get wrong?</b>
+            <b>Ask about your statements, or tell me what's wrong with them</b>
             <button className={s.x} onClick={() => setOpen(false)}>×</button>
           </div>
-          <textarea
-            className={s.fixInput} rows={2} value={text} onChange={(e) => setText(e.target.value)}
-            disabled={!!busy}
-            placeholder={`In your own words — e.g. "it's missing the rows on the last page after the summary box" · "foreign-currency rows use the dollar amount instead of the rupee one" · "rows are duplicated near page breaks" · "credits on the Amex come through negative"`}
-          />
-          <div className={s.fixRow}>
-            <button className={s.btnPrimary} onClick={run} disabled={!text.trim() || !!busy}>
-              {busy === "fixing" ? "Reading your statements and rewriting the parser…" : "Fix the parser"}
-            </button>
-            <span className={s.muted}>
-              It re-reads a sample of your parsed statements — the worst ones, plus a couple that currently parse cleanly as guards —
-              rewrites the parser, and keeps the change only if every one of them gets the same or better. Takes a few minutes.
-            </span>
-          </div>
+          <form onSubmit={(e) => { e.preventDefault(); ask(); }}>
+            <textarea
+              className={s.fixInput} rows={2} value={text} disabled={!!busy}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } }}
+              placeholder={`"which statements don't add up?" · "why does the April one have breaks?" · "how much did I spend on Swiggy?" · "am I missing any months?" · "any duplicate transactions?" — or "it's skipping the rows after the summary box"`}
+            />
+            <div className={s.fixRow}>
+              <button className={s.btnPrimary} type="submit" disabled={!text.trim() || !!busy}>
+                {busy === "asking" ? "Working it out…" : busy === "fixing" ? "Rewriting the parser…" : "Ask"}
+              </button>
+              <span className={s.muted}>Every number is computed from your statements, not guessed — the exact query and data are under each answer.</span>
+            </div>
+          </form>
         </>
       )}
+
+      {answers.map((a, n) => (
+        <div key={n} className={s.answer}>
+          <div className={s.askedQ}>{a.q}</div>
+          {a.error ? <div className={s.errBox}>⚠ {a.error}</div> : (
+            <>
+              <div className={s.answerText}>{a.text}</div>
+              <details className={s.trace}>
+                <summary>how I worked that out</summary>
+                <code>query {JSON.stringify(a.query)}</code>
+                <pre>{JSON.stringify(a.result, null, 1).slice(0, 4000)}</pre>
+              </details>
+              {a.intent === "complaint" && (
+                <div className={s.fixRow}>
+                  <button className={s.btnPrimary} onClick={() => run(a.q)} disabled={!!busy}>
+                    {busy === "fixing" ? "Rewriting the parser…" : "Rewrite the parser to fix this"}
+                  </button>
+                  <span className={s.muted}>Re-reads your statements, rewrites the parser, keeps the change only if nothing gets worse. A few minutes.</span>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      ))}
 
       {res && (
         <div className={res.error ? s.errBox : res.promoted ? s.okBox : s.warnBox} style={{ marginTop: 10 }}>
