@@ -146,6 +146,7 @@ export default function ImportClient() {
         <div className={s.brand}>Statements{entity && entity !== "personal" ? "" : entity ? " · Personal" : ""}</div>
         <div className={s.barRight}>
           <button className={s.link} onClick={() => setRulesOpen(true)}>Extractor rules</button>
+          <a className={s.link} href="/extractor" title="Teach the extractor: report a parsing problem and it rewrites its own code">Extractor lab</a>
           <a className={s.link} href="/import/local" title="Optional: parse + classify entirely on-device (no cloud model)">Private mode</a>
           <a className={s.link} href="/game">← Board</a>
         </div>
@@ -245,6 +246,9 @@ function Detail({ id, onClose, onChanged }) {
   const [q, setQ] = useState("");
   const [onlyReview, setOnlyReview] = useState(false);
   const [acctDraft, setAcctDraft] = useState("");
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportText, setReportText] = useState("");
+  const [reported, setReported] = useState("");
 
   const load = useCallback(async () => {
     const j = await (await fetch(`/api/statements/drafts/${id}`)).json();
@@ -271,6 +275,20 @@ function Detail({ id, onClose, onChanged }) {
     setWorking(""); if (j.error) { setChat((c) => [...c, { role: "assistant", text: `⚠ ${j.error}` }]); return; }
     setD(j); setHint(""); onChanged();
   };
+  // "This came out wrong" — keeps THIS statement as a test case for the extractor
+  // lab, which then rewrites the extractor's own code to handle it.
+  const reportProblem = async () => {
+    if (!reportText.trim()) return;
+    setWorking("Saving…");
+    const j = await (await fetch("/api/extractor/fixtures", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ draft_id: id, complaint: reportText }),
+    })).json();
+    setWorking("");
+    if (j.error) setReported(`⚠ ${j.error}`);
+    else { setReported("Saved — the extractor lab will be graded on this statement."); setReportOpen(false); setReportText(""); }
+  };
+
   const doImport = async (force = false) => {
     setWorking("Importing…");
     const j = await (await fetch(`/api/statements/drafts/${id}/import`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ force }) })).json();
@@ -324,6 +342,23 @@ function Detail({ id, onClose, onChanged }) {
                 <button className={s.btn} disabled={!hint.trim() || !!working} onClick={reextract}>{working || "Re-extract with this hint"}</button>
               </div>
               {d.meta?.hints?.length > 0 && <div className={s.muted}>Hints applied: {d.meta.hints.map((h) => `“${h.hint}”`).join(" · ")}</div>}
+              <div className={s.hintRow}>
+                <button className={s.linkBtn} onClick={() => setReportOpen((o) => !o)}>
+                  {reportOpen ? "▾" : "▸"} A hint isn't enough — the extractor itself is getting this wrong
+                </button>
+                {d.meta?.extractor_version != null && <span className={s.muted}>extractor v{d.meta.extractor_version}</span>}
+              </div>
+              {reportOpen && (
+                <div className={s.reportBox}>
+                  <div className={s.muted}>This keeps the statement as a permanent test case and sends it to the <a href="/extractor">extractor lab</a>, which rewrites the extractor's code and only ships the rewrite if it beats the current one on every statement you've reported.</div>
+                  <textarea rows={2} value={reportText} onChange={(e) => setReportText(e.target.value)} placeholder="What is it getting wrong, in your words?" />
+                  <div className={s.hintRow}>
+                    <button className={s.btn} disabled={!reportText.trim() || !!working} onClick={reportProblem}>Report a parsing problem</button>
+                    <a className={s.linkBtn} href="/extractor">Open the lab →</a>
+                  </div>
+                </div>
+              )}
+              {reported && <div className={s.muted}>{reported}</div>}
             </div>
           )}
 

@@ -108,3 +108,6 @@
 
 .toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); background: var(--ink); color: var(--page); padding: 10px 16px; border-radius: 10px; font-size: 13px; z-index: 60; max-width: 90vw; }
 @media (max-width: 720px) { .panel { width: 100%; } .panelTitle { max-width: 60vw; } }
+.linkBtn { font: inherit; font-size: 12.5px; color: var(--good-text); background: none; border: 0; padding: 0; cursor: pointer; text-decoration: none; }
+.reportBox { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; padding: 10px; border-radius: 10px; background: var(--page); border: 1px solid var(--border); }
+.reportBox a { color: var(--good-text); }
