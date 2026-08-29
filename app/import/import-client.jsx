@@ -64,7 +64,6 @@ export default function ImportClient() {
   const [entity, setEntity] = useState("");
   const [open, setOpen] = useState(null);             // draft id in the detail panel
   const [dragging, setDragging] = useState(false);
-  const [rulesOpen, setRulesOpen] = useState(false);
   const [toast, setToast] = useState("");
   const inputRef = useRef(null);
   const queue = useRef([]); const running = useRef(0);
@@ -145,8 +144,7 @@ export default function ImportClient() {
       <header className={s.bar}>
         <div className={s.brand}>Statements{entity && entity !== "personal" ? "" : entity ? " · Personal" : ""}</div>
         <div className={s.barRight}>
-          <button className={s.link} onClick={() => setRulesOpen(true)}>Extractor rules</button>
-          <a className={s.link} href="/extractor" title="Teach the extractor: report a parsing problem and it rewrites its own code">Extractor lab</a>
+          <a className={s.link} href="/extractor" title="Every version of the parser, with the scores it shipped on">Parser history</a>
           <a className={s.link} href="/import/local" title="Optional: parse + classify entirely on-device (no cloud model)">Private mode</a>
           <a className={s.link} href="/game">← Board</a>
         </div>
@@ -172,6 +170,7 @@ export default function ImportClient() {
               <div className={s.spacer} />
               <button className={s.btnPrimary} disabled={!cleanReady} onClick={importAllReady}>Import {cleanReady} clean {cleanReady === 1 ? "statement" : "statements"}</button>
             </div>
+            <ParserFix count={drafts.length} onReparsed={refresh} />
             <div className={s.grid}>
               {local.map((l) => (
                 <div key={l.key} className={`${s.card} ${s.cardBusy}`}>
@@ -192,7 +191,6 @@ export default function ImportClient() {
       <input ref={inputRef} type="file" multiple accept=".pdf,.csv,.xlsx,.xls,.txt" style={{ display: "none" }} onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
       {dragging && <div className={s.dropOverlay}>Drop to add</div>}
       {open && <Detail id={open} onClose={() => { setOpen(null); refresh(); }} onChanged={refresh} />}
-      {rulesOpen && <Rules onClose={() => setRulesOpen(false)} />}
       {toast && <div className={s.toast}>{toast}</div>}
     </div>
   );
@@ -238,17 +236,12 @@ function Card({ d, onOpen, onImport, onRemove }) {
 function Detail({ id, onClose, onChanged }) {
   const [d, setD] = useState(null);
   const [ctx, setCtx] = useState(null);
-  const [hint, setHint] = useState("");
-  const [remember, setRemember] = useState(false);
   const [working, setWorking] = useState("");
   const [result, setResult] = useState(null);
   const [chat, setChat] = useState([]);
   const [q, setQ] = useState("");
   const [onlyReview, setOnlyReview] = useState(false);
   const [acctDraft, setAcctDraft] = useState("");
-  const [reportOpen, setReportOpen] = useState(false);
-  const [reportText, setReportText] = useState("");
-  const [reported, setReported] = useState("");
 
   const load = useCallback(async () => {
     const j = await (await fetch(`/api/statements/drafts/${id}`)).json();
@@ -269,26 +262,6 @@ function Detail({ id, onClose, onChanged }) {
     setD(await (await fetch(`/api/statements/drafts/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ account: acctDraft }) })).json());
     onChanged();
   };
-  const reextract = async () => {
-    setWorking("Re-extracting with your hint…");
-    const j = await (await fetch(`/api/statements/drafts/${id}/reextract`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ hint, remember }) })).json();
-    setWorking(""); if (j.error) { setChat((c) => [...c, { role: "assistant", text: `⚠ ${j.error}` }]); return; }
-    setD(j); setHint(""); onChanged();
-  };
-  // "This came out wrong" — keeps THIS statement as a test case for the extractor
-  // lab, which then rewrites the extractor's own code to handle it.
-  const reportProblem = async () => {
-    if (!reportText.trim()) return;
-    setWorking("Saving…");
-    const j = await (await fetch("/api/extractor/fixtures", {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ draft_id: id, complaint: reportText }),
-    })).json();
-    setWorking("");
-    if (j.error) setReported(`⚠ ${j.error}`);
-    else { setReported("Saved — the extractor lab will be graded on this statement."); setReportOpen(false); setReportText(""); }
-  };
-
   const doImport = async (force = false) => {
     setWorking("Importing…");
     const j = await (await fetch(`/api/statements/drafts/${id}/import`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ force }) })).json();
@@ -332,35 +305,6 @@ function Detail({ id, onClose, onChanged }) {
             </div>
           )}
           {d.status === "failed" && <div className={s.errBox}><b>Extraction failed.</b> {d.meta?.error} — add a hint below and retry, or try <a href="/import/local">private on-device mode</a>.</div>}
-
-          {d.status !== "imported" && (
-            <div className={s.hintBox}>
-              <div className={s.lbl}>Something missing or wrong? Tell the extractor and run it again on this statement</div>
-              <textarea value={hint} onChange={(e) => setHint(e.target.value)} rows={2} placeholder={`e.g. "there are more rows on page 3 after the summary box" · "the second amount column is USD — use the INR one" · "dates are DD/MM"`} />
-              <div className={s.hintRow}>
-                <label className={s.check}><input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /> remember this for every statement of this account</label>
-                <button className={s.btn} disabled={!hint.trim() || !!working} onClick={reextract}>{working || "Re-extract with this hint"}</button>
-              </div>
-              {d.meta?.hints?.length > 0 && <div className={s.muted}>Hints applied: {d.meta.hints.map((h) => `“${h.hint}”`).join(" · ")}</div>}
-              <div className={s.hintRow}>
-                <button className={s.linkBtn} onClick={() => setReportOpen((o) => !o)}>
-                  {reportOpen ? "▾" : "▸"} A hint isn't enough — the extractor itself is getting this wrong
-                </button>
-                {d.meta?.extractor_version != null && <span className={s.muted}>extractor v{d.meta.extractor_version}</span>}
-              </div>
-              {reportOpen && (
-                <div className={s.reportBox}>
-                  <div className={s.muted}>This keeps the statement as a permanent test case and sends it to the <a href="/extractor">extractor lab</a>, which rewrites the extractor's code and only ships the rewrite if it beats the current one on every statement you've reported.</div>
-                  <textarea rows={2} value={reportText} onChange={(e) => setReportText(e.target.value)} placeholder="What is it getting wrong, in your words?" />
-                  <div className={s.hintRow}>
-                    <button className={s.btn} disabled={!reportText.trim() || !!working} onClick={reportProblem}>Report a parsing problem</button>
-                    <a className={s.linkBtn} href="/extractor">Open the lab →</a>
-                  </div>
-                </div>
-              )}
-              {reported && <div className={s.muted}>{reported}</div>}
-            </div>
-          )}
 
           <div className={s.tableTools}>
             <span className={s.muted}>{Object.entries(d.meta?.classified_by || {}).map(([k, v]) => `${k} ${v}`).join(" · ")}</span>
@@ -426,25 +370,104 @@ function Detail({ id, onClose, onChanged }) {
   );
 }
 
-// ── Extractor rules (persistent, per account) ───────────────────────────────
-function Rules({ onClose }) {
-  const [text, setText] = useState(""); const [status, setStatus] = useState("");
-  useEffect(() => { fetch("/api/statements/rules").then((r) => r.json()).then((j) => setText(j.rules || "")); }, []);
-  const save = async () => {
-    setStatus("saving…");
-    const j = await (await fetch("/api/statements/rules", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ rules: text }) })).json();
-    setStatus(j.error ? `⚠ ${j.error}` : "saved ✓ — applied to every future extraction");
+// ── The one box ─────────────────────────────────────────────────────────────
+// Say what's wrong with how your statements came out. It reads back every
+// statement you've already parsed, works out what's actually going wrong,
+// rewrites the parser's own code, and keeps the rewrite only if it beats the
+// current parser on ALL of them. Then it offers to re-parse everything so the
+// whole set is read the same way.
+function ParserFix({ count, onReparsed }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState("");
+  const [res, setRes] = useState(null);
+  const [reparse, setReparse] = useState(null);
+
+  const run = async () => {
+    if (!text.trim() || busy) return;
+    setBusy("fixing"); setRes(null); setReparse(null);
+    try {
+      const j = await (await fetch("/api/extractor/improve", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ complaint: text }),
+      })).json();
+      setRes(j);
+      if (j.promoted) setText("");
+    } catch (e) { setRes({ error: e.message }); }
+    setBusy("");
   };
+
+  const doReparse = async () => {
+    setBusy("reparsing");
+    try {
+      const j = await (await fetch("/api/statements/reparse", { method: "POST" })).json();
+      setReparse(j);
+      await onReparsed();
+    } catch (e) { setReparse({ error: e.message }); }
+    setBusy("");
+  };
+
+  if (!count) return null;
+
   return (
-    <div className={s.panelWrap} onClick={onClose}>
-      <div className={`${s.panel} ${s.panelNarrow}`} onClick={(e) => e.stopPropagation()}>
-        <div className={s.panelHead}><div className={s.panelTitle}>Rules the extractor remembers</div><button className={s.x} onClick={onClose}>×</button></div>
-        <div className={s.panelBody}>
-          <p className={s.muted}>Standing instructions for every statement in this workspace — e.g. “for foreign-currency card rows use the INR amount”, “ignore the rewards summary table”. A hint you tick “remember” on a statement lands here too.</p>
-          <textarea value={text} onChange={(e) => setText(e.target.value)} rows={8} placeholder="One rule per line…" />
-          <div className={s.hintRow}><span className={s.muted}>{status}</span><div className={s.spacer} /><button className={s.btnPrimary} onClick={save}>Save rules</button></div>
+    <section className={s.fixBox}>
+      {!open ? (
+        <button className={s.fixTrigger} onClick={() => setOpen(true)}>
+          ✎ Something parsed wrong? Tell the parser — it'll fix its own code
+        </button>
+      ) : (
+        <>
+          <div className={s.fixHead}>
+            <b>What did the parser get wrong?</b>
+            <button className={s.x} onClick={() => setOpen(false)}>×</button>
+          </div>
+          <textarea
+            className={s.fixInput} rows={2} value={text} onChange={(e) => setText(e.target.value)}
+            disabled={!!busy}
+            placeholder={`In your own words — e.g. "it's missing the rows on the last page after the summary box" · "foreign-currency rows use the dollar amount instead of the rupee one" · "rows are duplicated near page breaks" · "credits on the Amex come through negative"`}
+          />
+          <div className={s.fixRow}>
+            <button className={s.btnPrimary} onClick={run} disabled={!text.trim() || !!busy}>
+              {busy === "fixing" ? "Reading your statements and rewriting the parser…" : "Fix the parser"}
+            </button>
+            <span className={s.muted}>
+              It re-reads your parsed statements, rewrites the parser, and keeps the change only if every statement gets the same or better. Takes a few minutes.
+            </span>
+          </div>
+        </>
+      )}
+
+      {res && (
+        <div className={res.error ? s.errBox : res.promoted ? s.okBox : s.warnBox} style={{ marginTop: 10 }}>
+          {res.error ? <b>⚠ {res.error}</b> : (
+            <>
+              <b>{res.promoted ? `Parser updated to v${res.version}.` : res.no_corpus ? "Nothing to learn from yet." : "Parser unchanged."}</b>{" "}
+              {res.message}
+              {res.diagnosis && <div className={s.diag}><b>What I found:</b> {res.diagnosis}</div>}
+              {(res.improvements || []).length > 0 && (
+                <ul className={s.list}>{res.improvements.map((i, n) => <li key={n} className={s.pos}>{i.why}</li>)}</ul>
+              )}
+              {!res.promoted && (res.attempts || []).length > 0 && (
+                <ul className={s.list}>{res.attempts.map((a) => <li key={a.attempt} className={s.muted}>Attempt {a.attempt}: {a.reason}</li>)}</ul>
+              )}
+              {res.promoted && !reparse && (
+                <div className={s.fixRow} style={{ marginTop: 8 }}>
+                  <button className={s.btnPrimary} onClick={doReparse} disabled={!!busy}>
+                    {busy === "reparsing" ? "Re-parsing everything…" : `Re-parse all ${count} statement${count === 1 ? "" : "s"} with v${res.version}`}
+                  </button>
+                  <span className={s.muted}>So every statement is read by the same parser.</span>
+                </div>
+              )}
+            </>
+          )}
         </div>
-      </div>
-    </div>
+      )}
+
+      {reparse && (
+        <div className={reparse.error ? s.errBox : s.okBox} style={{ marginTop: 8 }}>
+          {reparse.error ? <b>⚠ {reparse.error}</b> : <><b>Done.</b> {reparse.message}</>}
+        </div>
+      )}
+    </section>
   );
 }

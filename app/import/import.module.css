@@ -111,3 +111,14 @@
 .linkBtn { font: inherit; font-size: 12.5px; color: var(--good-text); background: none; border: 0; padding: 0; cursor: pointer; text-decoration: none; }
 .reportBox { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; padding: 10px; border-radius: 10px; background: var(--page); border: 1px solid var(--border); }
 .reportBox a { color: var(--good-text); }
+
+/* the one box: tell the parser what it got wrong */
+.fixBox { margin-bottom: 14px; }
+.fixTrigger { font: inherit; font-size: 13px; color: var(--good-text); background: var(--surface); border: 1px dashed var(--border); border-radius: 12px; padding: 10px 14px; cursor: pointer; width: 100%; text-align: left; }
+.fixTrigger:hover { border-color: var(--good); }
+.fixHead { display: flex; align-items: center; font-size: 13.5px; margin-bottom: 6px; }
+.fixHead .x, .fixHead button { margin-left: auto; }
+.fixInput { font: inherit; font-size: 13px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--ink); width: 100%; box-sizing: border-box; resize: vertical; }
+.fixRow { display: flex; align-items: center; gap: 12px; margin-top: 8px; flex-wrap: wrap; }
+.diag { margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: var(--surface); font-size: 12.5px; line-height: 1.5; }
+.list { margin: 8px 0 0; padding-left: 20px; font-size: 12.5px; line-height: 1.6; }
