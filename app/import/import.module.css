@@ -113,10 +113,11 @@
 .reportBox a { color: var(--good-text); }
 
 /* the one box: tell the parser what it got wrong */
-.fixBox { margin-bottom: 14px; }
+.fixBox { margin-bottom: 14px; padding: 13px 15px; border-radius: 14px; background: var(--surface); border: 1px solid var(--border); }
 .fixTrigger { font: inherit; font-size: 13px; color: var(--good-text); background: var(--surface); border: 1px dashed var(--border); border-radius: 12px; padding: 10px 14px; cursor: pointer; width: 100%; text-align: left; }
 .fixTrigger:hover { border-color: var(--good); }
-.fixHead { display: flex; align-items: center; font-size: 13.5px; margin-bottom: 6px; }
+.fixHead { display: flex; align-items: baseline; gap: 12px; font-size: 13.5px; margin-bottom: 8px; }
+.fixHead .muted { margin-left: auto; }
 .fixHead .x, .fixHead button { margin-left: auto; }
 .fixInput { font: inherit; font-size: 13px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--ink); width: 100%; box-sizing: border-box; resize: vertical; }
 .fixRow { display: flex; align-items: center; gap: 12px; margin-top: 8px; flex-wrap: wrap; }
@@ -126,3 +127,12 @@
 .askedQ { font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
 .askedQ::before { content: "you asked: "; }
 .answerText { font-size: 13.5px; line-height: 1.6; white-space: pre-wrap; }
+
+/* the box is the page's main control — always visible, obviously an input */
+.askForm { display: flex; gap: 8px; align-items: stretch; }
+.askForm .fixInput { flex: 1; }
+.askBtn { font: inherit; font-size: 13.5px; font-weight: 600; padding: 0 20px; border-radius: 10px; border: 0; background: var(--good); color: #fff; cursor: pointer; white-space: nowrap; }
+.askBtn:disabled { opacity: .45; cursor: default; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.chipBtn { font: inherit; font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); cursor: pointer; }
+.chipBtn:hover { color: var(--ink); border-color: var(--ink); }

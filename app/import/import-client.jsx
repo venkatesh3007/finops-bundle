@@ -133,7 +133,14 @@ export default function ImportClient() {
     for (const d of ready) { const j = await importOne(d.id); if (j.ok) ok++; else held++; }
     flash(`Imported ${ok} statement${ok === 1 ? "" : "s"}${held ? ` · ${held} held (closing balance didn't reconcile — open to see the diff)` : ""}`);
   };
-  const remove = async (id) => { await fetch(`/api/statements/drafts/${id}`, { method: "DELETE" }); setOpen((o) => (o === id ? null : o)); refresh(); };
+  // Removing a statement is permanent: parsing happens in the browser, so the
+  // draft holds the ONLY server-side copy of that statement's text. Always ask.
+  const remove = async (id, name) => {
+    if (!window.confirm(`Remove “${name}”?\n\nThis deletes the parsed statement and the text it was parsed from. Nothing is removed from your ledger, and you can re-add it by dropping the file again — but it can't be undone here.`)) return;
+    await fetch(`/api/statements/drafts/${id}`, { method: "DELETE" });
+    setOpen((o) => (o === id ? null : o));
+    refresh();
+  };
 
   const busy = local.length > 0;
   const cleanReady = drafts.filter((d) => d.status === "ready" && d.needs_review === 0 && d.breaks === 0).length;
@@ -181,7 +188,7 @@ export default function ImportClient() {
                   </div>
                 </div>
               ))}
-              {drafts.map((d) => <Card key={d.id} d={d} onOpen={() => setOpen(d.id)} onImport={() => importOne(d.id).then((j) => flash(j.ok ? `Imported ${d.filename}` : `⚠ ${d.filename}: ${j.hint || j.error || "closing balance doesn't reconcile — open for details"}`))} onRemove={() => remove(d.id)} />)}
+              {drafts.map((d) => <Card key={d.id} d={d} onOpen={() => setOpen(d.id)} onImport={() => importOne(d.id).then((j) => flash(j.ok ? `Imported ${d.filename}` : `⚠ ${d.filename}: ${j.hint || j.error || "closing balance doesn't reconcile — open for details"}`))} onRemove={() => remove(d.id, d.filename)} />)}
             </div>
             <div className={s.dropHint}>Drop more files anywhere on this page.</div>
           </>
@@ -211,7 +218,7 @@ function Card({ d, onOpen, onImport, onRemove }) {
     <div className={`${s.card} ${d.status === "imported" ? s.cardDone : ""}`} onClick={onOpen}>
       <div className={s.cardTop}>
         <div className={s.cardName} title={d.filename}>{d.filename}</div>
-        <button className={s.x} title="Remove this draft" onClick={(e) => { e.stopPropagation(); onRemove(); }}>×</button>
+        <button className={s.x} title="Remove this statement (asks first)" onClick={(e) => { e.stopPropagation(); onRemove(); }}>×</button>
       </div>
       <div className={s.cardMeta}>{acct || "account?"} · {d.source?.toUpperCase()} · {d.from && d.to ? `${d.from} → ${d.to}` : fmtBytes(d.bytes)}</div>
       <div className={s.cardStatus}><StatusPill d={d} /></div>
@@ -377,7 +384,6 @@ function Detail({ id, onClose, onChanged }) {
 // current parser on ALL of them. Then it offers to re-parse everything so the
 // whole set is read the same way.
 function ParserFix({ count, onReparsed }) {
-  const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState("");
   const [res, setRes] = useState(null);
@@ -387,8 +393,8 @@ function ParserFix({ count, onReparsed }) {
   // One box. A question is answered from computed data straight away; a report
   // of something parsing wrong is answered too, then offers the parser rewrite —
   // that costs minutes and gateway calls, so it is never fired without a click.
-  const ask = async () => {
-    const q = text.trim();
+  const ask = async (preset) => {
+    const q = (typeof preset === "string" ? preset : text).trim();
     if (!q || busy) return;
     setBusy("asking"); setRes(null);
     try {
@@ -431,32 +437,27 @@ function ParserFix({ count, onReparsed }) {
 
   return (
     <section className={s.fixBox}>
-      {!open ? (
-        <button className={s.fixTrigger} onClick={() => setOpen(true)}>
-          ✎ Ask anything about your statements — or say what parsed wrong
+      {/* Always visible: this is the main control on the page, not a hint. */}
+      <div className={s.fixHead}>
+        <b>Ask about your statements — or say what parsed wrong</b>
+        <span className={s.muted}>{count} parsed · every number computed from them, not guessed</span>
+      </div>
+      <form className={s.askForm} onSubmit={(e) => { e.preventDefault(); ask(); }}>
+        <textarea
+          className={s.fixInput} rows={2} value={text} disabled={!!busy}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } }}
+          placeholder={`"which statements don't add up?" · "why does the April one have breaks?" · "how much did I spend on Swiggy?" · "am I missing any months?" — or tell me what's wrong: "it skips the rows after the summary box"`}
+        />
+        <button className={s.askBtn} type="submit" disabled={!text.trim() || !!busy}>
+          {busy === "asking" ? "…" : busy === "fixing" ? "Rewriting…" : "Ask"}
         </button>
-      ) : (
-        <>
-          <div className={s.fixHead}>
-            <b>Ask about your statements, or tell me what's wrong with them</b>
-            <button className={s.x} onClick={() => setOpen(false)}>×</button>
-          </div>
-          <form onSubmit={(e) => { e.preventDefault(); ask(); }}>
-            <textarea
-              className={s.fixInput} rows={2} value={text} disabled={!!busy}
-              onChange={(e) => setText(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } }}
-              placeholder={`"which statements don't add up?" · "why does the April one have breaks?" · "how much did I spend on Swiggy?" · "am I missing any months?" · "any duplicate transactions?" — or "it's skipping the rows after the summary box"`}
-            />
-            <div className={s.fixRow}>
-              <button className={s.btnPrimary} type="submit" disabled={!text.trim() || !!busy}>
-                {busy === "asking" ? "Working it out…" : busy === "fixing" ? "Rewriting the parser…" : "Ask"}
-              </button>
-              <span className={s.muted}>Every number is computed from your statements, not guessed — the exact query and data are under each answer.</span>
-            </div>
-          </form>
-        </>
-      )}
+      </form>
+      <div className={s.chips}>
+        {["How are my statements doing?", "Which ones don't add up?", "Am I missing any months?", "Any duplicate transactions?"].map((c) => (
+          <button key={c} className={s.chipBtn} disabled={!!busy} onClick={() => { ask(c); }}>{c}</button>
+        ))}
+      </div>
 
       {answers.map((a, n) => (
         <div key={n} className={s.answer}>
