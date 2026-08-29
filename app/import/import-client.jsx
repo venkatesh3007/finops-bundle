@@ -28,11 +28,20 @@ async function readFile(file) {
   const buf = await file.arrayBuffer();
   const sha256 = await sha256Hex(buf);
   const base = { filename: name, bytes: buf.byteLength, sha256 };
-  if (ext === "csv" || ext === "txt") return { ...base, source: "csv", rows: parseGrid(csvToGrid(new TextDecoder("utf-8").decode(buf))).rows };
+  // Tabular files parse deterministically when the layout is a normal grid; the
+  // raw text rides along so the server can fall back to the frontier extractor
+  // when it isn't (a bank that exports a decorated/pivoted "CSV").
+  if (ext === "csv" || ext === "txt") {
+    const text = new TextDecoder("utf-8").decode(buf);
+    return { ...base, source: "csv", rows: parseGrid(csvToGrid(text)).rows, text: text.slice(0, 1_500_000) };
+  }
   if (ext === "xlsx" || ext === "xls") {
     const XLSX = await import("xlsx");
     const wb = XLSX.read(buf, { type: "array", cellDates: true });
-    return { ...base, source: "xlsx", rows: parseGrid(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: null })).rows };
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    const grid = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: null });
+    const text = grid.map((r) => (r || []).map((c) => (c == null ? "" : String(c))).join("\t")).join("\n");
+    return { ...base, source: "xlsx", rows: parseGrid(grid).rows, text: text.slice(0, 1_500_000) };
   }
   if (ext === "pdf") {
     const pdfjs = await import("pdfjs-dist");
