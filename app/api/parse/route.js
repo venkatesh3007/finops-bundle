@@ -34,7 +34,7 @@ export async function POST(req) {
     const job = await startJob(entity, { kind: "parse", title, draft_id: ids.length === 1 ? ids[0] : null });
 
     // fire and forget: the job records its own progress and outcome
-    runParseJob({ entity, entId, jobId: job.id, draftIds: ids }).catch(() => {});
+    runParseJob({ entity, entId, jobId: job.id, draftIds: ids, regenerate: !!b.regenerate }).catch(() => {});
     return Response.json({ ok: true, job_id: job.id, statements: ids.length });
   } catch (e) { return Response.json({ error: String(e?.message || e) }, { status: 400 }); }
 }

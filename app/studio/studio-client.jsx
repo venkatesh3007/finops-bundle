@@ -172,18 +172,25 @@ export default function StudioClient() {
     const q = text.trim();
     if (!q || busy) return;
     setText("");
-    const t = q.toLowerCase();
-    if (/^(re-?parse|parse|re-?read|redo)\b/.test(t)) {
-      const onlyBroken = /broken|breaks|failing|bad|don'?t add|wrong/.test(t);
-      return startJob(onlyBroken ? { only_broken: true } : { all: true }, q);
-    }
     say("you", q);
-    setBusy("asking");
+    setBusy("thinking");
+    // One door: the assistant decides whether to look something up, start a
+    // re-parse, or just answer. No keyword routing in the UI.
+    const history = [...log, { role: "you", text: q }]
+      .filter((m) => m.role === "you" || m.role === "agent")
+      .map((m) => ({ role: m.role === "you" ? "user" : "assistant", content: m.text }));
     try {
-      const j = await (await fetch("/api/statements/ask-all", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ question: q }) })).json();
-      say("agent", j.error ? `⚠ ${j.error}` : j.text, { query: j.query, data: j.result });
+      const j = await (await fetch("/api/chat", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ messages: history }),
+      })).json();
+      if (j.error) say("agent", `⚠ ${j.error}`);
+      else {
+        say("agent", j.reply, { trace: j.trace });
+        if (j.job_id) { seen.current = 0; setJob({ id: j.job_id, status: "running" }); }
+      }
     } catch (e) { say("agent", `⚠ ${e.message}`); }
-    setBusy("");
+    setBusy((b) => (b === "thinking" ? "" : b));
   };
 
   const running = job?.status === "running";
@@ -221,7 +228,17 @@ export default function StudioClient() {
               : (
                 <div key={i} className={m.role === "you" ? s.you : s.agent}>
                   <div className={s.bubble}>{m.text}</div>
-                  {m.query && <details className={s.trace}><summary>how I worked that out</summary><code>{JSON.stringify(m.query)}</code><pre>{JSON.stringify(m.data, null, 1).slice(0, 3000)}</pre></details>}
+                  {m.trace?.length > 0 && (
+                    <details className={s.trace}>
+                      <summary>{m.trace.map((t) => t.tool).join(" → ")}</summary>
+                      {m.trace.map((t, k) => (
+                        <div key={k}>
+                          <code>{t.tool} {JSON.stringify(t.input)}</code>
+                          <pre>{String(t.summary || "").slice(0, 2000)}</pre>
+                        </div>
+                      ))}
+                    </details>
+                  )}
                 </div>
               ))}
             {running && <div className={s.working}><span className={s.spin} /> working…</div>}
@@ -229,13 +246,13 @@ export default function StudioClient() {
           </div>
 
           <div className={s.composer}>
-            <textarea id="studio-input" rows={2} value={text} placeholder="Ask about your statements, or say “reparse the broken ones”…"
+            <textarea id="studio-input" rows={2} value={text} placeholder="Ask anything, or tell me what to do — “rewrite the parser for the Feb statement”…"
               onChange={(e) => setText(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} />
             <div className={s.composerBtns}>
               {running
                 ? <button className={s.stop} onClick={stop}>■ Stop</button>
-                : <button className={s.send} onClick={send} disabled={!text.trim() || !!busy}>{busy === "asking" ? "…" : "Send"}</button>}
+                : <button className={s.send} onClick={send} disabled={!text.trim() || !!busy}>{busy === "thinking" ? "…" : "Send"}</button>}
               <button className={s.ghost} onClick={() => inputRef.current?.click()} disabled={running}>＋ Statement</button>
             </div>
           </div>
