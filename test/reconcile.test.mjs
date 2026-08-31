@@ -38,14 +38,25 @@ it("names the CREDITS side when payments are missing (the real 2026-01-08 case)"
   assert.equal(r.sides.credits.ok, false);
   assert.equal(r.sides.debits.ok, true);
   assert.equal(r.sides.credits.gap, 290395.32);
-  assert.match(r.note, /money IN .*290395\.32 of credits\/payments is missing/);
+  assert.match(r.note, /money IN .*290395\.32 of credits\/payments has not been read/);
 });
 
 it("names the DEBITS side when charges are missing", () => {
   const r = reconcile([tx(749017.25), tx(-164522.39)], AMEX);
   assert.equal(r.sides.debits.ok, false);
   assert.equal(r.sides.debits.gap, 100000);
-  assert.match(r.note, /money OUT .*of charges is missing/);
+  assert.match(r.note, /money OUT .*100000 of charges has not been read/);
+});
+
+it("says COUNTED TWICE when the rows exceed the printed total (not 'missing')", () => {
+  // The real 2025-05-08: rows total 8,290 MORE than the statement says exists.
+  // Calling that "missing" sent the repair round hunting for extra charges while
+  // the cross-check was telling it to delete a duplicate.
+  const r = reconcile([tx(749017.25), tx(-272812.39)], AMEX);
+  assert.equal(r.sides.debits.ok, false);
+  assert.ok(r.sides.debits.gap < 0, "gap should be negative when over-counted");
+  assert.match(r.note, /MORE than the statement says — something is counted twice/);
+  assert.doesNotMatch(r.note, /has not been read/);
 });
 
 it("reports both sides when both are short", () => {

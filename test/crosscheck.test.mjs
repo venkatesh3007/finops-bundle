@@ -101,5 +101,27 @@ it("withdraws every line-level claim when the scan can't reproduce the printed t
   assert.match(r.findings.join(" "), /not making any claim about individual rows/);
 });
 
+console.log("\napplicable corrections — the free remedy");
+it("proposes swapping an FX row to the home amount", () => {
+  const rows = [row("2025-03-13","PAYMENT RECEIVED",90000), row("2025-03-17","CURSOR",-20), row("2025-03-20","ZOMATO",-38187.89)];
+  const r = crossCheck({ pages: [PAGE], rows, printed });
+  const c = r.corrections.find((x) => x.kind === "fix_amount");
+  assert.equal(c.from, 20); assert.equal(c.to, 1812.11);
+});
+it("proposes dropping a row restated under a summary heading", () => {
+  const page = PAGE + `   Summary of New Installment Plans Created
+   You have enrolled into the following New Installment Plans this month.
+   March 21    INSTALLMENT PRINCIPAL AMOUNT                       8,290.00
+`;
+  const rows = [...GOOD, row("2025-03-21","INSTALLMENT PRINCIPAL AMOUNT",-8290)];
+  const r = crossCheck({ pages: [page], rows, printed: { total_credits: 90000, total_debits: 40000 } });
+  const c = r.corrections.find((x) => x.kind === "drop_row");
+  assert.equal(c.amount, 8290);
+});
+it("proposes nothing when the extraction is right", () =>
+  assert.equal(crossCheck({ pages: [PAGE], rows: GOOD, printed }).corrections.length, 0));
+it("proposes nothing when it does not understand the layout", () =>
+  assert.equal(crossCheck({ pages: ["unparseable"], rows: GOOD, printed }).corrections.length, 0));
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
