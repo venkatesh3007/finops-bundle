@@ -11,7 +11,7 @@ import { join } from "node:path";
 
 const tmp = join(mkdtempSync(join(tmpdir(), "finops-gates-")), "gates.mjs");
 writeFileSync(tmp, readFileSync(new URL("../lib/parser/gates.js", import.meta.url), "utf8"));
-const { acceptable, attemptCost, priorResult, regressionReason } = await import(tmp);
+const { acceptable, attemptCost, priorResult, regressionReason, documentNumbers, groundBalances } = await import(tmp);
 
 let pass = 0, fail = 0;
 const it = (name, fn) => {
@@ -76,6 +76,63 @@ it("REJECTS verifiable -> unverifiable (what the 25-statement run did)", () => {
 it("a reconciling prior is defended by the reconciled rule first", () =>
   assert.match(regressionReason(prior, { rows: 6, breaks: 0, reconciled: false, verifiable: false }),
     /reconciles and this one does not/));
+
+console.log("\ngroundBalances() — a balance only counts if the document prints it");
+// The real statement that triggered this: no balance column at all, and the
+// parser answered with a running cumulative total plus opening 0 / closing <sum>.
+const invented = {
+  transactions: [
+    { description: "ZOMATO", amount: -1250, balance: 1250 },
+    { description: "BLUE TOKAI", amount: -480, balance: 1730 },
+    { description: "INDIGO", amount: -8900, balance: 10630 },
+  ],
+  opening_balance: 0, closing_balance: 25470,
+};
+const noBalanceDoc = `Date Merchant Amount
+03-Jul-2026 ZOMATO ORDER 8891 1,250.00
+07-Jul-2026 BLUE TOKAI COFFEE 480.00
+12-Jul-2026 INDIGO AIRLINES 8,900.00`;
+
+it("strips a fabricated running total (the tautology bug)", () => {
+  const g = groundBalances(invented, noBalanceDoc);
+  // 1250 IS printed (it's the amount), so it survives — but the totals that exist
+  // nowhere on the page do not, and that is enough to break the false envelope.
+  assert.equal(g.closing_balance, null);
+  assert.equal(g.transactions[1].balance, null); // 1730 appears nowhere
+  assert.equal(g.transactions[2].balance, null); // 10630 appears nowhere
+  assert.ok(g.dropped >= 3);
+});
+
+it("keeps balances that ARE printed, with comma/decimal formatting", () => {
+  const doc = `01-Jul OPENING 50,000.00
+03-Jul ZOMATO 1,250.00 48,750.00
+07-Jul SALARY 80,000.00 128,750.00`;
+  const g = groundBalances({
+    transactions: [{ amount: -1250, balance: 48750 }, { amount: 80000, balance: 128750.0 }],
+    opening_balance: 50000, closing_balance: null,
+  }, doc);
+  assert.equal(g.transactions[0].balance, 48750);
+  assert.equal(g.transactions[1].balance, 128750);
+  assert.equal(g.opening_balance, 50000);
+  assert.equal(g.dropped, 0);
+});
+
+it("matches on magnitude, so a negative printed as 1,234.56 Cr still counts", () => {
+  const g = groundBalances({ transactions: [{ amount: -10, balance: -1234.56 }] }, "CLOSING 1,234.56 Cr");
+  assert.equal(g.transactions[0].balance, -1234.56);
+  assert.equal(g.dropped, 0);
+});
+
+it("leaves rows without a balance alone", () => {
+  const g = groundBalances({ transactions: [{ amount: -10, balance: null }] }, "nothing here");
+  assert.equal(g.transactions[0].balance, null);
+  assert.equal(g.dropped, 0);
+});
+
+it("documentNumbers normalises commas and decimals", () => {
+  const set = documentNumbers("Total 1,234.50 and 99 and 0.05");
+  assert.ok(set.has("1234.50") && set.has("99.00") && set.has("0.05"));
+});
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
