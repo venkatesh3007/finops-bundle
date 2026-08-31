@@ -5,7 +5,8 @@
     "dev": "NEXT_TELEMETRY_DISABLED=1 WATCHPACK_POLLING=true CHOKIDAR_USEPOLLING=true next dev",
     "build": "node scripts/vendor.mjs && NODE_ENV=production next build",
     "start": "next start",
-    "postinstall": "node scripts/vendor.mjs"
+    "postinstall": "node scripts/vendor.mjs",
+    "test": "node test/gates.test.mjs"
   },
   "dependencies": {
     "next": "14.2.5",
