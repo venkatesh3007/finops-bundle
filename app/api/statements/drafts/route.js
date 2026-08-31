@@ -2,7 +2,7 @@ import { resolveEntity } from "../../../../lib/tenant";
 import { listDrafts, createAndProcess } from "../../../../lib/statements/drafts";
 import { gatewayConfigured } from "../../../../lib/statements/gateway";
 
-export const maxDuration = 300; // frontier extraction of a large statement (chunked)
+export const maxDuration = 800; // matches /api/parse; extraction now runs as a job anyway // frontier extraction of a large statement (chunked)
 export const dynamic = "force-dynamic";
 
 // GET  → { drafts: [card…], extraction: bool }   the caller's stored statements

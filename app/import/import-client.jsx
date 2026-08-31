@@ -76,6 +76,29 @@ export default function ImportClient() {
   useEffect(() => { refresh(); }, [refresh]);
 
   const flash = (t) => { setToast(t); setTimeout(() => setToast(""), 3200); };
+
+  // Follow a statement being read in the background: refresh the card as it goes,
+  // and surface the job's latest step so a two-minute read shows its working
+  // ("re-reading part 5", "applied a correction from the document itself")
+  // instead of a silent spinner.
+  const watchDraft = useCallback(async (id, jobId) => {
+    for (let i = 0; i < 240; i++) {          // ~20 minutes at 5s
+      await new Promise((r) => setTimeout(r, 5000));
+      try {
+        const d = await (await fetch(`/api/statements/drafts/${id}`)).json();
+        if (jobId) {
+          const j = await (await fetch(`/api/jobs/${jobId}`)).json();
+          const last = (j.steps || []).slice(-1)[0];
+          if (last?.text) setDrafts((ds) => ds.map((x) => (x.id === id ? { ...x, live_step: last.text } : x)));
+        }
+        if (d?.status && d.status !== "processing") {
+          setDrafts((ds) => [ { ...d, rows: undefined, live_step: undefined }, ...ds.filter((x) => x.id !== id) ]);
+          if (d.status === "failed") flash(`⚠ ${d.filename}: ${d.meta?.error || "extraction failed"}`);
+          return;
+        }
+      } catch { /* transient — keep watching */ }
+    }
+  }, []);
   const patchLocal = (key, p) => setLocal((l) => l.map((x) => (x.key === key ? { ...x, ...p } : x)));
 
   // ── parallel pipeline: read in the browser, then POST (≤ PARALLEL at a time) ──
@@ -90,6 +113,10 @@ export default function ImportClient() {
           setLocal((l) => l.filter((x) => x.key !== job.key));
           setDrafts((ds) => [ { ...j, rows: undefined }, ...ds.filter((d) => d.id !== j.id) ]);
           if (j.duplicate) flash(`${job.body.filename} was already uploaded — opened the existing one`);
+          // Reading now happens in the background, so the card lands as
+          // 'processing' and fills in as the job reports. Waiting on the request
+          // is what used to time out on a long statement.
+          if (j.status === "processing") await watchDraft(j.id, j.job_id);
           if (j.status === "failed") flash(`⚠ ${job.body.filename}: ${j.meta?.error || "extraction failed"}`);
         } catch (e) { patchLocal(job.key, { stage: "error", error: e.message }); }
         finally { running.current--; pump(); }
@@ -231,6 +258,10 @@ function Card({ d, onOpen, onImport, onRemove }) {
         </div>
       )}
       {d.status === "failed" && <div className={s.bad} style={{ fontSize: 12 }}>{d.meta?.error}</div>}
+      {/* A long read shows its working rather than a silent spinner. */}
+      {(d.status === "processing" || d.status === "queued") && d.live_step && (
+        <div className={s.muted} style={{ fontSize: 12 }}>{d.live_step}</div>
+      )}
       <div className={s.cardActions}>
         <button className={s.btnSm} onClick={(e) => { e.stopPropagation(); onOpen(); }}>{d.status === "imported" ? "View" : d.status === "failed" ? "Retry with a hint" : "Review"}</button>
         {d.status === "ready" && <button className={`${s.btnSm} ${s.btnSmPrimary}`} onClick={(e) => { e.stopPropagation(); onImport(); }}>Import</button>}
