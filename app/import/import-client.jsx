@@ -432,6 +432,14 @@ function ParserFix({ count, onReparsed }) {
   const [res, setRes] = useState(null);
   const [answers, setAnswers] = useState([]);
   const [reparse, setReparse] = useState(null);
+  const [steps, setSteps] = useState([]);
+  const [rules, setRules] = useState([]);
+  const [grade, setGrade] = useState(null);
+
+  const loadRules = useCallback(async () => {
+    try { const j = await (await fetch("/api/statements/rules")).json(); setRules(j.rules || []); } catch { /* ignore */ }
+  }, []);
+  useEffect(() => { loadRules(); }, [loadRules]);
 
   // One box. A question is answered from computed data straight away; a report
   // of something parsing wrong is answered too, then offers the parser rewrite —
@@ -451,19 +459,62 @@ function ParserFix({ count, onReparsed }) {
     setBusy("");
   };
 
+  // INVESTIGATE, don't guess. This used to jump straight to rewriting the
+  // parser's code from a one-line complaint. Now it reads the statement, writes
+  // and runs analysis code against the source text, and only proposes a fix once
+  // it has evidence — the same way a person would debug it. Steps stream in, so
+  // you can see the reasoning rather than a spinner.
   const run = async (complaint) => {
     if (busy) return;
-    setBusy("fixing"); setRes(null); setReparse(null);
-    const text = complaint;
+    setBusy("fixing"); setRes(null); setReparse(null); setSteps([]);
     try {
-      const j = await (await fetch("/api/extractor/improve", {
+      const start = await (await fetch("/api/statements/investigate", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ complaint }),
+        body: JSON.stringify({ messages: [{ role: "user", content: complaint || "Some statements don't add up. Find out why." }] }),
       })).json();
-      setRes(j);
-      if (j.promoted) setText("");
+      if (start.error) throw new Error(start.error);
+
+      for (let i = 0; i < 300; i++) {                 // ~10 min at 2s
+        await new Promise((r) => setTimeout(r, 2000));
+        const j = await (await fetch(`/api/jobs/${start.job_id}`)).json();
+        setSteps(j.steps || []);
+        if (j.status === "done") {
+          setRes({ reply: j.result?.reply, proposed_rules: j.result?.proposed_rules || [], steps: j.steps || [] });
+          await loadRules();
+          break;
+        }
+        if (j.status === "failed" || j.status === "cancelled") {
+          setRes({ error: j.result?.error || "the investigation stopped" });
+          break;
+        }
+      }
     } catch (e) { setRes({ error: e.message }); }
     setBusy("");
+  };
+
+  // A proposed rule is not live until it has been graded: every statement in its
+  // scope is re-read and it is kept only if nothing gets worse.
+  const gradeRule = async (id) => {
+    setBusy("grading"); setGrade(null);
+    try {
+      const start = await (await fetch(`/api/statements/rules/${id}`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "grade" }),
+      })).json();
+      if (start.error) throw new Error(start.error);
+      for (let i = 0; i < 300; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const j = await (await fetch(`/api/jobs/${start.job_id}`)).json();
+        setSteps(j.steps || []);
+        if (j.status === "done") { setGrade(j.result); await loadRules(); await onReparsed(); break; }
+        if (j.status === "failed") { setGrade({ error: j.result?.error || "grading stopped" }); break; }
+      }
+    } catch (e) { setGrade({ error: e.message }); }
+    setBusy("");
+  };
+
+  const rejectRule = async (id) => {
+    await fetch(`/api/statements/rules/${id}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "reject" }) });
+    await loadRules();
   };
 
   const doReparse = async () => {
@@ -496,8 +547,8 @@ function ParserFix({ count, onReparsed }) {
           {busy === "asking" ? "…" : "Ask"}
         </button>
         <button className={s.fixBtn} type="button" disabled={!!busy} onClick={() => run(text)}
-          title="Rewrite the parser's own code. Describe the problem above, or leave it empty and it fixes whatever it finds worst.">
-          {busy === "fixing" ? "Rewriting the parser…" : "Fix the parser"}
+          title="Read the statement, run analysis against the source text, and find out what actually went wrong. Describe the problem above, or leave it empty and it looks at whatever doesn't add up.">
+          {busy === "fixing" ? "Investigating…" : "Investigate"}
         </button>
       </form>
       <div className={s.chips}>
@@ -505,6 +556,85 @@ function ParserFix({ count, onReparsed }) {
           <button key={c} className={s.chipBtn} disabled={!!busy} onClick={() => { ask(c); }}>{c}</button>
         ))}
       </div>
+
+      {/* What the investigation is doing, as it does it — the code it runs and what
+          came back. A two-minute job should show its working, not a spinner. */}
+      {(busy === "fixing" || busy === "grading") && !!steps.length && (
+        <div className={s.answer}>
+          <div className={s.askedQ}>{busy === "grading" ? "Grading the rule…" : "Investigating…"}</div>
+          <ol className={s.trace} style={{ margin: 0, paddingLeft: 18 }}>
+            {steps.slice(-8).map((st, i) => (
+              <li key={i} className={s.muted} style={{ fontSize: 12, marginBottom: 2 }}>{String(st.text).slice(0, 220)}</li>
+            ))}
+          </ol>
+        </div>
+      )}
+
+      {res && !res.error && res.reply && (
+        <div className={s.answer}>
+          <div className={s.answerText} style={{ whiteSpace: "pre-wrap" }}>{res.reply}</div>
+          {!!(res.steps || []).length && (
+            <details className={s.trace}>
+              <summary>how I worked that out — {(res.steps || []).length} step(s)</summary>
+              {(res.steps || []).filter((st) => st.kind === "code").map((st, i) => (
+                <div key={i} style={{ marginBottom: 8 }}>
+                  <code>{String(st.text).slice(0, 300)}</code>
+                  {st.data?.input?.code && <pre>{String(st.data.input.code).slice(0, 1200)}</pre>}
+                  {st.data?.summary && <pre className={s.muted}>{String(st.data.summary).slice(0, 1500)}</pre>}
+                </div>
+              ))}
+            </details>
+          )}
+        </div>
+      )}
+      {res?.error && <div className={s.errBox}>⚠ {res.error}</div>}
+
+      {/* Rules it wants to add. Nothing here is live until it has been graded:
+          every statement in scope is re-read and the rule is kept only if
+          nothing loses rows, nothing gains breaks, and something improves. */}
+      {!!rules.filter((r) => r.status === "proposed").length && (
+        <div className={s.answer}>
+          <div className={s.askedQ}>Proposed fixes — not applied yet</div>
+          {rules.filter((r) => r.status === "proposed").map((r) => (
+            <div key={r.id} className={s.fixRow} style={{ flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
+              <div><b>({r.scope})</b> {r.rule}</div>
+              {r.why && <div className={s.muted} style={{ fontSize: 12 }}>{r.why}</div>}
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className={s.btnPrimary} disabled={!!busy} onClick={() => gradeRule(r.id)}>
+                  {busy === "grading" ? "Testing…" : "Test it on every statement"}
+                </button>
+                <button className={s.btnSm} disabled={!!busy} onClick={() => rejectRule(r.id)}>Discard</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {grade && (
+        <div className={s.answer}>
+          {grade.error ? <div className={s.errBox}>⚠ {grade.error}</div> : (
+            <>
+              <div className={s.answerText}><b>{grade.verdict}</b>{grade.tested ? ` · tested on ${grade.tested} statement(s)` : ""}</div>
+              {!!(grade.improvements || []).length && <ul>{grade.improvements.map((x, i) => <li key={i}>✓ {x}</li>)}</ul>}
+              {!!(grade.regressions || []).length && <ul>{grade.regressions.map((x, i) => <li key={i} className={s.bad}>✗ {x}</li>)}</ul>}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* What this book has learned. Every one of these is applied to future
+          statements from that source, and every one earned its place. */}
+      {!!rules.filter((r) => r.status === "active").length && (
+        <details className={s.trace}>
+          <summary>{rules.filter((r) => r.status === "active").length} rule(s) learned from your statements</summary>
+          {rules.filter((r) => r.status === "active").map((r) => (
+            <div key={r.id} style={{ marginBottom: 6 }}>
+              <code>({r.scope})</code> {r.rule}
+              {r.evidence?.improvements?.length ? <div className={s.muted} style={{ fontSize: 12 }}>{r.evidence.improvements.join(" · ")}</div> : null}
+            </div>
+          ))}
+        </details>
+      )}
 
       {answers.map((a, n) => (
         <div key={n} className={s.answer}>
@@ -520,9 +650,9 @@ function ParserFix({ count, onReparsed }) {
               {(a.intent === "complaint" || hasParseProblem(a)) && (
                 <div className={s.fixRow}>
                   <button className={s.btnPrimary} onClick={() => run(a.q)} disabled={!!busy}>
-                    {busy === "fixing" ? "Rewriting the parser…" : a.intent === "complaint" ? "Rewrite the parser to fix this" : "Rewrite the parser to fix these"}
+                    {busy === "fixing" ? "Investigating…" : a.intent === "complaint" ? "Investigate this" : "Investigate these"}
                   </button>
-                  <span className={s.muted}>Re-reads your statements, rewrites the parser, keeps the change only if nothing gets worse. A few minutes.</span>
+                  <span className={s.muted}>Reads the source, runs analysis against it, and proposes a fix only with evidence. A few minutes.</span>
                 </div>
               )}
             </>
