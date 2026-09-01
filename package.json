@@ -6,7 +6,7 @@
     "build": "node scripts/vendor.mjs && NODE_ENV=production next build",
     "start": "next start",
     "postinstall": "node scripts/vendor.mjs",
-    "test": "node test/gates.test.mjs && node test/reconcile.test.mjs && node test/completeness.test.mjs && node test/retry.test.mjs && node test/crosscheck.test.mjs && node test/investigate.test.mjs"
+    "test": "node test/gates.test.mjs && node test/reconcile.test.mjs && node test/completeness.test.mjs && node test/retry.test.mjs && node test/crosscheck.test.mjs && node test/investigate.test.mjs && node test/protocol.test.mjs"
   },
   "dependencies": {
     "next": "14.2.5",
