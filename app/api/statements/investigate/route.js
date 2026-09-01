@@ -25,7 +25,7 @@ export async function POST(req) {
         for (const t of out.trace || []) {
           await jobStep(job.id, "code", `${t.tool}: ${t.thought || ""}`, { input: t.input, summary: String(t.summary || "").slice(0, 4000) }).catch(() => {});
         }
-        await finishJob(job.id, "done", { reply: out.reply, proposed_rules: out.proposed_rules, steps: (out.trace || []).length });
+        await finishJob(job.id, "done", { reply: out.reply, proposed_rules: out.proposed_rules, steps: (out.trace || []).length, out_of_turns: !!out.out_of_turns, empty_reply: !!out.empty_reply });
       } catch (e) {
         await jobStep(job.id, "error", String(e.message || e).slice(0, 300)).catch(() => {});
         await finishJob(job.id, "failed", { error: String(e.message || e).slice(0, 300) });
