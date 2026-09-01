@@ -29,6 +29,13 @@ for (const m of [
   "fetch failed",
 ]) it(JSON.stringify(m.slice(0, 34)), () => assert.equal(isTransient(new Error(m)), true));
 
+console.log("\nclient-side timeouts (the nine-minute stall):");
+for (const m of [
+  "gateway call aborted after 240s — no reply",
+  "gateway went quiet for 60s mid-reply — treating it as dropped",
+  "gateway call exceeded the time limit",
+]) it(JSON.stringify(m.slice(0, 40)), () => assert.equal(isTransient(new Error(m)), true));
+
 console.log("\nNOT transient (never silently retried):");
 for (const m of [
   "gateway 400: bad request",
