@@ -9,7 +9,22 @@ const OPEN = (p) =>
   p.startsWith("/api/admin") ||
   p.startsWith("/api/auth") ||   // login / register / me / logout
   p === "/login" ||
-  p === "/api/passcode";
+  p === "/api/passcode" ||
+  // The MCP connector and its OAuth. These MUST bypass this gate:
+  //   .well-known — discovery is unauthenticated by definition; a redirect to
+  //     /login here makes the connector undiscoverable.
+  //   /api/mcp    — it answers its own 401 carrying the WWW-Authenticate
+  //     challenge that tells a client where to authorise. The generic 401 below
+  //     has no challenge, so clients would never find the OAuth flow.
+  //   /api/oauth  — register and token are public per the spec; approve verifies
+  //     the session itself before minting anything.
+  //   /oauth/authorize — the consent screen handles its own signed-out state.
+  //     The redirect below drops the query string, which would strip the PKCE
+  //     challenge and redirect_uri and break the flow silently.
+  p.startsWith("/.well-known/") ||
+  p === "/api/mcp" ||
+  p.startsWith("/api/oauth/") ||
+  p === "/oauth/authorize";
 
 export function middleware(req) {
   const { pathname } = req.nextUrl;
