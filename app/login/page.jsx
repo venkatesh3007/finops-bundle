@@ -5,6 +5,16 @@ import { startRegistration, startAuthentication } from "@simplewebauthn/browser"
 const post = (url, body) =>
   fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
 
+// Where to land after signing in. Used by the MCP consent screen, which sends you
+// here and needs you back on the authorize URL — only same-origin paths are
+// honoured, so this can't be turned into an open redirect.
+const nextTarget = () => {
+  try {
+    const n = new URLSearchParams(window.location.search).get("next");
+    return n && n.startsWith("/") && !n.startsWith("//") ? n : "/game";
+  } catch { return "/game"; }
+};
+
 export default function Login() {
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState("");
@@ -27,7 +37,7 @@ export default function Login() {
       catch { setBusy(""); return; } // user cancelled the OS prompt
       const vr = await post("/api/auth/passkey/login/verify", { response: asr, challenge: options.challenge });
       const v = await vr.json();
-      if (vr.ok) location.href = "/game";
+      if (vr.ok) location.href = nextTarget();
       else setErr(v.error || "sign-in failed");
     } catch (e) { setErr(String(e.message || e)); }
     setBusy("");
@@ -50,7 +60,7 @@ export default function Login() {
       catch { setBusy(""); return; }
       const vr = await post("/api/auth/passkey/register/verify", { response: att, challenge: options.challenge });
       const v = await vr.json();
-      if (vr.ok) location.href = "/game";
+      if (vr.ok) location.href = nextTarget();
       else setErr(v.error || "could not finish");
     } catch (e) { setErr(String(e.message || e)); }
     setBusy("");
@@ -73,7 +83,7 @@ export default function Login() {
   async function submitCode(e) {
     e.preventDefault(); reset();
     const r = await post("/api/passcode", { code });
-    if (r.ok) location.href = "/game"; else setErr("Wrong passcode");
+    if (r.ok) location.href = nextTarget(); else setErr("Wrong passcode");
   }
 
   const B = { padding: "11px 16px", borderRadius: 10, border: 0, fontWeight: 600, fontSize: 15, cursor: "pointer", width: "100%" };
