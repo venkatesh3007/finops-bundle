@@ -420,6 +420,34 @@ function hasParseProblem(a) {
   return false;
 }
 
+// Follow a background job until it actually ends.
+//
+// Both callers used to poll `for (let i = 0; i < 300; i++)` — ten minutes at a
+// 2s interval — and then fall out of the loop silently. Grading six statements
+// twice takes about twenty-five minutes, so the panel simply went blank mid-run
+// while the job carried on server-side, which reads exactly like "nothing is
+// running". A job ends when the server says it ended; the client doesn't get a
+// vote. The ceiling here is a backstop against a leaked interval, not a
+// judgement about how long work may take, and hitting it says so out loud.
+const FOLLOW_CEILING_MS = 90 * 60 * 1000;
+
+async function followJob(jobId, onSteps, { signal } = {}) {
+  const until = Date.now() + FOLLOW_CEILING_MS;
+  while (Date.now() < until) {
+    if (signal?.aborted) throw new Error("stopped watching");
+    await new Promise((r) => setTimeout(r, 2000));
+    let j;
+    try {
+      j = await (await fetch(`/api/jobs/${jobId}`)).json();
+    } catch {
+      continue; // a dropped poll is not a dead job — keep watching
+    }
+    onSteps?.(j.steps || []);
+    if (j.status === "done" || j.status === "failed" || j.status === "cancelled") return j;
+  }
+  throw new Error("stopped watching this run after 90 minutes — it may still be going; reload to pick it up again");
+}
+
 // ── The one box ─────────────────────────────────────────────────────────────
 // Say what's wrong with how your statements came out. It reads back every
 // statement you've already parsed, works out what's actually going wrong,
@@ -440,6 +468,53 @@ function ParserFix({ count, onReparsed }) {
     try { const j = await (await fetch("/api/statements/rules")).json(); setRules(j.rules || []); } catch { /* ignore */ }
   }, []);
   useEffect(() => { loadRules(); }, [loadRules]);
+
+  // Watching a run is separate from starting one, so that a run started before
+  // this component mounted — or before the last page reload — can be picked up
+  // and shown exactly like one you just kicked off.
+  const watchInvestigation = useCallback(async (jobId) => {
+    setBusy("fixing");
+    try {
+      const j = await followJob(jobId, setSteps);
+      if (j.status === "done") {
+        setRes({ reply: j.result?.reply, proposed_rules: j.result?.proposed_rules || [], steps: j.steps || [] });
+        await loadRules();
+      } else {
+        setRes({ error: j.result?.error || "the investigation stopped" });
+      }
+    } catch (e) { setRes({ error: e.message }); }
+    setBusy("");
+  }, [loadRules]);
+
+  const watchGrading = useCallback(async (jobId) => {
+    setBusy("grading");
+    try {
+      const j = await followJob(jobId, setSteps);
+      if (j.status === "done") { setGrade(j.result); await loadRules(); await onReparsed(); }
+      else { setGrade({ error: j.result?.error || "grading stopped" }); }
+    } catch (e) { setGrade({ error: e.message }); }
+    setBusy("");
+  }, [loadRules, onReparsed]);
+
+  // RE-ATTACH. Work lives in the database, not in this tab: reload the page,
+  // come back tomorrow, or open it on another machine and a run that is still
+  // going should still be on screen. Without this the only handle on a job was
+  // the id returned by the POST that started it, so a refresh orphaned it.
+  const attached = useRef(false);
+  useEffect(() => {
+    if (attached.current) return;
+    attached.current = true;
+    (async () => {
+      try {
+        const { jobs = [] } = await (await fetch("/api/jobs")).json();
+        const live = jobs.find((j) => j.status === "running" && (j.kind === "investigate" || j.kind === "grade_rule"));
+        if (!live) return;
+        setSteps(live.last_step ? [live.last_step] : []);
+        if (live.kind === "grade_rule") await watchGrading(live.id);
+        else await watchInvestigation(live.id);
+      } catch { /* nothing to re-attach to */ }
+    })();
+  }, [watchGrading, watchInvestigation]);
 
   // One box. A question is answered from computed data straight away; a report
   // of something parsing wrong is answered too, then offers the parser rewrite —
@@ -474,22 +549,8 @@ function ParserFix({ count, onReparsed }) {
       })).json();
       if (start.error) throw new Error(start.error);
 
-      for (let i = 0; i < 300; i++) {                 // ~10 min at 2s
-        await new Promise((r) => setTimeout(r, 2000));
-        const j = await (await fetch(`/api/jobs/${start.job_id}`)).json();
-        setSteps(j.steps || []);
-        if (j.status === "done") {
-          setRes({ reply: j.result?.reply, proposed_rules: j.result?.proposed_rules || [], steps: j.steps || [] });
-          await loadRules();
-          break;
-        }
-        if (j.status === "failed" || j.status === "cancelled") {
-          setRes({ error: j.result?.error || "the investigation stopped" });
-          break;
-        }
-      }
-    } catch (e) { setRes({ error: e.message }); }
-    setBusy("");
+      await watchInvestigation(start.job_id);
+    } catch (e) { setRes({ error: e.message }); setBusy(""); }
   };
 
   // A proposed rule is not live until it has been graded: every statement in its
@@ -501,15 +562,8 @@ function ParserFix({ count, onReparsed }) {
         method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "grade" }),
       })).json();
       if (start.error) throw new Error(start.error);
-      for (let i = 0; i < 300; i++) {
-        await new Promise((r) => setTimeout(r, 2000));
-        const j = await (await fetch(`/api/jobs/${start.job_id}`)).json();
-        setSteps(j.steps || []);
-        if (j.status === "done") { setGrade(j.result); await loadRules(); await onReparsed(); break; }
-        if (j.status === "failed") { setGrade({ error: j.result?.error || "grading stopped" }); break; }
-      }
-    } catch (e) { setGrade({ error: e.message }); }
-    setBusy("");
+      await watchGrading(start.job_id);
+    } catch (e) { setGrade({ error: e.message }); setBusy(""); }
   };
 
   const rejectRule = async (id) => {

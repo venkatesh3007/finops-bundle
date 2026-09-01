@@ -1,7 +1,7 @@
 import { resolveEntity } from "../../../../../lib/tenant";
 import { setRuleStatus } from "../../../../../lib/statements/rules";
 import { gradeProposedRule } from "../../../../../lib/statements/rule-grader";
-import { startJob, step as jobStep, finishJob } from "../../../../../lib/jobs/store";
+import { startJob, step as jobStep, finishJob, beat } from "../../../../../lib/jobs/store";
 
 export const maxDuration = 800;
 
@@ -21,6 +21,10 @@ export async function POST(req, { params }) {
 
     const job = await startJob(entity, { kind: "grade_rule", title: "Grading a proposed rule" });
     (async () => {
+      // Grading re-reads six statements twice. A single read runs for minutes and
+      // writes no step while it does, so without a heartbeat the stale-job reaper
+      // declares a perfectly healthy run dead half way through.
+      const stopBeat = beat(job.id);
       try {
         const out = await gradeProposedRule(entity, params.id, {
           onNote: (t) => jobStep(job.id, "note", String(t).slice(0, 300)).catch(() => {}),
@@ -29,7 +33,7 @@ export async function POST(req, { params }) {
       } catch (e) {
         await jobStep(job.id, "error", String(e.message || e).slice(0, 300)).catch(() => {});
         await finishJob(job.id, "failed", { error: String(e.message || e).slice(0, 300) });
-      }
+      } finally { stopBeat(); }
     })();
     return Response.json({ ok: true, job_id: job.id });
   } catch (e) { return Response.json({ error: String(e?.message || e) }, { status: 400 }); }

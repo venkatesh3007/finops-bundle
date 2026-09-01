@@ -40,6 +40,22 @@ it("catches a last row dated before the first (the real 2025-05-08)", () => {
   assert.match(o.note, /reverse date order|dated before/);
 });
 it("passes on chronological rows", () => assert.equal(ordering([row("2026-01-01"), row("2026-01-05")]).ok, true));
+// The real idbi-79657_2026-08: newest-first, but with several transactions per
+// day. The old test demanded a descent on EVERY step, and an equal step is not a
+// descent, so it never fired — 76 phantom breaks, 94% of the whole corpus.
+it("flags newest-first even when dates repeat", () => {
+  const o = ordering([row("2026-08-30"), row("2026-08-29"), row("2026-08-29"), row("2026-08-26")]);
+  assert.equal(o.reversed, true);
+  assert.equal(o.ok, false);
+  assert.match(o.note, /newest first/);
+});
+it("does not call a genuinely jumbled statement reversed", () => {
+  const o = ordering([row("2026-08-02"), row("2026-08-01"), row("2026-08-09")]);
+  assert.equal(o.reversed, false);   // it steps forward somewhere, so it is not newest-first
+  assert.equal(o.ok, false);
+});
+it("repeated dates alone are not a reversal", () =>
+  assert.equal(ordering([row("2026-08-05"), row("2026-08-05")]).reversed, false));
 
 console.log("\nchunkAccounting — the targeting signal for repair");
 const page = ["03-Jul-2026  ZOMATO ORDER   1,250.00", "07-Jul-2026  SALARY  80,000.00",

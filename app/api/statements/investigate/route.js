@@ -1,6 +1,6 @@
 import { resolveEntity } from "../../../../lib/tenant";
 import { investigate } from "../../../../lib/agent/investigate";
-import { startJob, step as jobStep, finishJob } from "../../../../lib/jobs/store";
+import { startJob, step as jobStep, finishJob, beat } from "../../../../lib/jobs/store";
 
 export const maxDuration = 800;
 
@@ -17,6 +17,7 @@ export async function POST(req) {
 
     const job = await startJob(entity, { kind: "investigate", title: `Investigate: ${String(history[history.length - 1].content).slice(0, 60)}` });
     (async () => {
+      const stopBeat = beat(job.id);
       try {
         const out = await investigate(entity, history, {
           focus: b.focus || null,
@@ -29,7 +30,7 @@ export async function POST(req) {
       } catch (e) {
         await jobStep(job.id, "error", String(e.message || e).slice(0, 300)).catch(() => {});
         await finishJob(job.id, "failed", { error: String(e.message || e).slice(0, 300) });
-      }
+      } finally { stopBeat(); }
     })();
     return Response.json({ ok: true, job_id: job.id });
   } catch (e) { return Response.json({ error: String(e?.message || e) }, { status: 400 }); }
