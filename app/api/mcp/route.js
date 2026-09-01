@@ -14,6 +14,7 @@ import { verifyAccess, issuer } from "../../../lib/mcp-oauth";
 import { listDrafts, getDraft, updateDraft, importDraft } from "../../../lib/statements/drafts";
 import { classificationContext } from "../../../lib/statements-import";
 import { reconcile } from "../../../lib/statements/reconcile";
+import { listSourceRules, setSourceRule, resolveHome, accountIsOpen, matchableText } from "../../../lib/statements/source-rules";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -58,6 +59,9 @@ const TOOLS = [
         rows: d.rows_count, period: d.from && d.to ? `${d.from} → ${d.to}` : null,
         reconciled: !!d.reconciled, breaks: d.breaks || 0, note: d.rec_note || null,
         needs_review: d.needs_review || 0,
+        // where the home account came from: a source rule, a per-statement
+        // override, the built-in filename guess, or nothing yet
+        account_source: d.meta?.account_source ?? (d.account ? "default" : null),
       })).filter((d) => (only_unreconciled ? !d.reconciled : true));
       return { statements: out, total: out.length, reconciling: out.filter((d) => d.reconciled).length };
     },
@@ -248,6 +252,87 @@ const TOOLS = [
     },
   },
   {
+    name: "list_source_rules",
+    title: "Where each kind of statement posts from",
+    description: "The home-account rules in force, by parser kind, and whether the built-in filename guess still applies to that kind. The home account is the leg every row posts FROM — the bank or card the statement belongs to.",
+    schema: { type: "object", properties: {} },
+    async run(_a, { entity }) {
+      const rules = await listSourceRules(entity);
+      const kinds = {};
+      for (const r of rules) {
+        kinds[r.kind] ||= { rules: [], default_rule: null, builtin_guess_in_force: false };
+        if (r.match) kinds[r.kind].rules.push({ match: r.match, account: r.account });
+        else kinds[r.kind].default_rule = r.account;
+      }
+      // A kind with no rule at all still falls back to the filename guess.
+      const seen = await query(
+        `select distinct d.kind from statement_drafts d join entities e on e.id = d.entity_id where e.slug=$1 and d.kind is not null`, [entity]);
+      for (const { kind } of seen) if (!kinds[kind]) kinds[kind] = { rules: [], default_rule: null, builtin_guess_in_force: true };
+      return { kinds, rule_count: rules.length };
+    },
+  },
+  {
+    name: "set_source_rule",
+    title: "Set where a kind of statement posts from",
+    description: "Teach the books that statements of a kind post from an account, so every future upload lands on the right side of the balance sheet. A rule with `match` applies only to statements whose filename or extracted text contains it; a rule without `match` is the default for that kind. Once a kind has any rule, the built-in guess is ignored: a statement matching no rule gets no home account and cannot be imported until set_statement_account is called. Never touches amounts, counter-legs or reconciliation.",
+    schema: {
+      type: "object",
+      properties: {
+        kind: { type: "string", description: "a parser kind from list_statements: primary, fed, idbi" },
+        account: { type: "string", description: "an account from list_accounts — must already be open" },
+        match: { type: "string", description: "optional substring, case-insensitive, tested against the filename and the full extracted statement text (header included, not only rows). Omit to set the kind default." },
+        apply_to_existing: { type: "boolean", description: "also re-home every not-yet-imported statement of this kind that this rule selects (default false)" },
+        remove: { type: "boolean", description: "delete the rule identified by kind+match instead of setting it" },
+      },
+      required: ["kind", "account"],
+    },
+    async run({ kind, account, match, apply_to_existing, remove }, { entity }) {
+      const rule = await setSourceRule(entity, { kind, account, match, remove: !!remove });
+      const rules = await listSourceRules(entity);
+      const out = { rule, rules_for_kind: rules.filter((r) => r.kind === kind), applied: [], ambiguous: [], skipped_imported: [] };
+      if (!apply_to_existing || remove) return out;
+
+      const ds = await query(
+        `select d.id, d.filename, d.account, d.status, d.meta from statement_drafts d
+           join entities e on e.id = d.entity_id where e.slug=$1 and d.kind=$2`, [entity, kind]);
+      for (const d of ds) {
+        if (d.status === "imported") { out.skipped_imported.push(d.id); continue; }
+        const home = resolveHome(rules, { kind, filename: d.filename, text: matchableText(d) });
+        if (home.ambiguous) { out.ambiguous.push({ statement_id: d.id, filename: d.filename, matched_rules: home.matched.map((r) => r.match) }); continue; }
+        if (!home.account || home.account === d.account) continue;
+        await query(
+          `update statement_drafts set account=$3, meta = coalesce(meta,'{}'::jsonb) || jsonb_build_object('account_source','rule'), updated_at=now() where id=$1 and entity_id=(select id from entities where slug=$2)`,
+          [d.id, entity, home.account]);
+        out.applied.push({ statement_id: d.id, filename: d.filename, account_before: d.account, account_after: home.account });
+      }
+      return out;
+    },
+  },
+  {
+    name: "set_statement_account",
+    title: "Re-home one statement",
+    description: "Change the account one statement posts from — the home leg of every row. Changes where the statement's own balance is reported, never how much or where the other side goes. Refuses if the statement has already been imported; that is a ledger correction, not a staging change.",
+    schema: {
+      type: "object",
+      properties: {
+        statement_id: { type: "string", description: "id from list_statements" },
+        account: { type: "string", description: "an account from list_accounts — must already be open" },
+      },
+      required: ["statement_id", "account"],
+    },
+    async run({ statement_id, account }, { entity }) {
+      const d = await getDraft(entity, statement_id);
+      if (!d) throw new Error("no such statement");
+      if (d.status === "imported")
+        throw new Error(`${d.filename} is already imported — re-homing it now would leave the ledger disagreeing with the statement. That is a ledger correction, not a staging change.`);
+      if (!(await accountIsOpen(entity, account))) throw new Error(`${account} is not open — use open_account first.`);
+      await query(
+        `update statement_drafts set account=$3, meta = coalesce(meta,'{}'::jsonb) || jsonb_build_object('account_source','override'), updated_at=now()
+          where id=$1 and entity_id=(select id from entities where slug=$2)`, [statement_id, entity, account]);
+      return { statement_id, filename: d.filename, kind: d.kind, account_before: d.account, account_after: account, rows: (d.rows || []).length, status: d.status };
+    },
+  },
+  {
     name: "import_statement",
     title: "Import a statement into the ledger",
     description: "Post a statement's rows into the books. Every row needs an account first. This writes to the ledger — say what you are importing before you do it.",
@@ -259,6 +344,8 @@ const TOOLS = [
     async run({ statement_id, force }, { entity, email }) {
       const d = await getDraft(entity, statement_id);
       if (!d) throw new Error("no such statement");
+      if (!d.account)
+        throw new Error("no home account — set_source_rule or set_statement_account first");
       const missing = (d.rows || []).filter((r) => !r.account).length;
       if (missing) throw new Error(`${missing} row(s) have no account yet — categorise them first (statement_rows with unclassified_only)`);
       if (!d.reconciliation?.reconciled && !force)
