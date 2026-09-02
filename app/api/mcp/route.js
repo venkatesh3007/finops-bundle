@@ -11,7 +11,7 @@
 import { query } from "../../../lib/db";
 import { ensureUserEntity } from "../../../lib/tenant";
 import { verifyAccess, issuer } from "../../../lib/mcp-oauth";
-import { listDrafts, getDraft, updateDraft, importDraft } from "../../../lib/statements/drafts";
+import { listDrafts, getDraft, updateDraft, importDraft, fixRow } from "../../../lib/statements/drafts";
 import { classificationContext } from "../../../lib/statements-import";
 import { reconcile } from "../../../lib/statements/reconcile";
 import { listSourceRules, setSourceRule, resolveHome, accountIsOpen, matchableText } from "../../../lib/statements/source-rules";
@@ -83,7 +83,10 @@ const TOOLS = [
     async run({ statement_id, match, unclassified_only, limit = 60, offset = 0 }, { entity }) {
       const d = await getDraft(entity, statement_id);
       if (!d) throw new Error("no such statement");
-      let rows = (d.rows || []).map((r, i) => ({ i, date: r.date, desc: r.desc, amount: r.amount, balance: r.balance, account: r.account, source: r.source }));
+      // `i` is the row's own stable id, NOT its position. updateDraft and fixRow
+      // both address by it, so handing back a position would silently edit the
+      // neighbouring row.
+      let rows = (d.rows || []).map((r, pos) => ({ i: r.i ?? pos + 1, date: r.date, desc: r.desc, amount: r.amount, balance: r.balance, account: r.account, source: r.source, corrected: r.corrected || undefined }));
       if (match) rows = rows.filter((r) => String(r.desc || "").toLowerCase().includes(match.toLowerCase()));
       if (unclassified_only) rows = rows.filter((r) => !r.account);
       return { filename: d.filename, account: d.account, matched: rows.length, rows: rows.slice(offset, offset + Math.min(limit, 200)) };
@@ -177,6 +180,26 @@ const TOOLS = [
       for (const i of idx) patch[i] = account;
       await updateDraft(entity, statement_id, { row_accounts: patch });
       return { ok: true, updated: idx.length, account, rows: idx.slice(0, 40) };
+    },
+  },
+  {
+    name: "fix_row",
+    title: "Correct a row's amount or remove it",
+    description: "Correct what a row SAYS, not where it goes: set its amount, flip its sign, or drop a row the parser invented (a summary line read as a transaction, a description fragment turned into a duplicate). This changes the books, so it is only kept if the statement's arithmetic gets no worse — the reconciler decides, and a change that helps nothing is refused with the numbers that explain why. Use set_row_account for categorising; that moves the other leg and never touches amounts.",
+    schema: {
+      type: "object",
+      properties: {
+        statement_id: { type: "string" },
+        row: { type: "number", description: "the row's `i` from statement_rows — its id, not its position" },
+        action: { type: "string", enum: ["set_amount", "flip_sign", "drop"], description: "flip_sign when the printed balance moves the other way (a refund read as a charge); drop when the line is not a transaction at all" },
+        amount: { type: "number", description: "set_amount only — negative for money out" },
+        reason: { type: "string", description: "what the document says, recorded on the row" },
+        force: { type: "boolean", description: "apply even though the reconciler sees no improvement. Only with the statement open in front of you — e.g. a printed total rounded to the rupee." },
+      },
+      required: ["statement_id", "row", "action"],
+    },
+    async run({ statement_id, row, action, amount, reason, force }, { entity }) {
+      return await fixRow(entity, statement_id, { row, action, amount, reason, force: !!force });
     },
   },
   {
