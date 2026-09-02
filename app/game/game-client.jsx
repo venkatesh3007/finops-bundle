@@ -758,7 +758,11 @@ function Warehouse({ entity, month }) {
   const loadCrates = useCallback(async (account) => {
     setCrates(null);
     const [y, m] = month.split("-").map(Number); const last = new Date(y, m, 0).getDate();
-    const j = await (await fetch(`/api/txns?entity=${entity}&account=${encodeURIComponent(account)}&from=${month}-01&to=${month}-${String(last).padStart(2, "0")}&withcorr=1&limit=60`)).json();
+    // The shelf footer states "spent − came back = net". net is the shelf total
+    // over EVERY crate, so the other two have to be as well: at limit=60 a
+    // 104-crate shelf summed a page and equated it to the whole, printing
+    // 60,014 − 8,290 = 2,98,823. A month's shelf is a few hundred crates at most.
+    const j = await (await fetch(`/api/txns?entity=${entity}&account=${encodeURIComponent(account)}&from=${month}-01&to=${month}-${String(last).padStart(2, "0")}&withcorr=1&limit=1000`)).json();
     setCrates(j.txns || []);
   }, [entity, month]);
 
@@ -855,7 +859,12 @@ function netOut(crates) {
     if (used.has(i)) continue; const a = it[i].a; if (a === 0) { used.add(i); continue; }
     for (let j = i + 1; j < it.length; j++) {
       if (used.has(j)) continue;
-      if (Math.sign(a) !== Math.sign(it[j].a) && Math.abs(Math.abs(a) - Math.abs(it[j].a)) < 1) { used.add(i); used.add(j); break; }
+      // At least one side must actually BE plumbing. Without that test, any two
+      // opposite-sign crates of equal size cancelled — a real ₹9,000 payment and
+      // an unrelated ₹9,000 refund would both vanish from the shelf, and on a
+      // busy month equal-and-opposite amounts are common.
+      if (Math.sign(a) !== Math.sign(it[j].a) && Math.abs(Math.abs(a) - Math.abs(it[j].a)) < 1
+          && (it[i].plumb || it[j].plumb)) { used.add(i); used.add(j); break; }
     }
   }
   for (let i = 0; i < it.length; i++) {
