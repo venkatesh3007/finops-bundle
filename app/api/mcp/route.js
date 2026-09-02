@@ -8,7 +8,7 @@
 // EVERY tool is scoped to the caller's OWN entity, resolved from the OAuth token
 // server-side. There is no entity parameter to pass and none is honoured, so a
 // token can never reach another person's book.
-import { query } from "../../../lib/db";
+import { query, pool } from "../../../lib/db";
 import { ensureUserEntity } from "../../../lib/tenant";
 import { verifyAccess, issuer } from "../../../lib/mcp-oauth";
 import { listDrafts, getDraft, updateDraft, importDraft, fixRow, clearRowOverrides } from "../../../lib/statements/drafts";
@@ -169,10 +169,15 @@ const TOOLS = [
       const known = await query("select 1 from accounts where entity_id=$1 and name=$2", [ent[0].id, account]);
       if (!known.length) throw new Error(`the account "${account}" is not open — call open_account first, or list_accounts to see what exists`);
 
+      // MATCH MUST YIELD ROW IDS, not array positions. updateDraft addresses rows
+      // by their stored 1-based `i`; forwarding the position wrote to the row
+      // above every time, which is how 156 rows ended up one place out.
       const idx = Array.isArray(rows) && rows.length
         ? rows
         : match
-          ? (d.rows || []).map((r, i) => [r, i]).filter(([r]) => String(r.desc || "").toLowerCase().includes(match.toLowerCase())).map(([, i]) => i)
+          ? (d.rows || []).map((r, pos) => [r, r.i ?? pos + 1])
+              .filter(([r]) => String(r.desc || "").toLowerCase().includes(match.toLowerCase()))
+              .map(([, id]) => id)
           : [];
       if (!idx.length) throw new Error("nothing selected — pass row indexes, or a `match` that hits at least one row");
 
@@ -369,6 +374,49 @@ const TOOLS = [
         `update statement_drafts set account=$3, meta = coalesce(meta,'{}'::jsonb) || jsonb_build_object('account_source','override'), updated_at=now()
           where id=$1 and entity_id=(select id from entities where slug=$2)`, [statement_id, entity, account]);
       return { statement_id, filename: d.filename, kind: d.kind, account_before: d.account, account_after: account, rows: (d.rows || []).length, status: d.status };
+    },
+  },
+  {
+    name: "unimport_statement",
+    title: "Take a statement back out of the ledger",
+    description: "Remove a statement's posted transactions and return it to staging, so its rows can be recategorised and imported again. The ledger is append-only for edits — this is a whole-statement withdrawal, not a partial one, and it is the supported way to correct categories after import: withdraw, fix the rows, import again. Amounts and reconciliation are untouched; re-import is idempotent on (file, row id), so nothing doubles.",
+    schema: {
+      type: "object",
+      properties: {
+        statement_id: { type: "string", description: "id from list_statements" },
+        all_of_account: { type: "string", description: "instead of one statement: withdraw every imported statement homed to this account" },
+      },
+    },
+    async run({ statement_id, all_of_account }, { entity }) {
+      if (!statement_id && !all_of_account) throw new Error("pass a statement_id, or all_of_account to withdraw a whole account");
+      const ds = await query(
+        all_of_account
+          ? `select d.id, d.filename, d.kind from statement_drafts d join entities e on e.id=d.entity_id where e.slug=$1 and d.status='imported' and d.account=$2`
+          : `select d.id, d.filename, d.kind from statement_drafts d join entities e on e.id=d.entity_id where e.slug=$1 and d.id=$2 and d.status='imported'`,
+        [entity, all_of_account || statement_id]);
+      if (!ds.length) throw new Error("nothing imported matches that — check list_statements");
+
+      const out = [];
+      const client = await pool().connect();
+      try {
+        // The append-only guard blocks edits to posted rows on purpose. A
+        // deliberate, whole-statement withdrawal is what its finops.allow_mutation
+        // escape hatch is for — and it has to be SET LOCAL inside one transaction,
+        // because a pooled query would land on a different connection.
+        await client.query("begin");
+        await client.query("set local finops.allow_mutation = 'on'");
+        for (const d of ds) {
+          // the same path importStatement writes as source_file
+          const path = `statements/${entity}/${d.kind || "other"}/${String(d.filename).replace(/[^A-Za-z0-9._ -]/g, "_")}`;
+          const r = await client.query(
+            "delete from transactions where entity_id=(select id from entities where slug=$1) and source_file=$2", [entity, path]);
+          await client.query("update statement_drafts set status='ready', result=null, updated_at=now() where id=$1", [d.id]);
+          out.push({ statement_id: d.id, filename: d.filename, transactions_removed: r.rowCount });
+        }
+        await client.query("commit");
+      } catch (e) { await client.query("rollback").catch(() => {}); throw e; }
+      finally { client.release(); }
+      return { withdrawn: out, total_transactions_removed: out.reduce((t, x) => t + x.transactions_removed, 0) };
     },
   },
   {
