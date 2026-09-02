@@ -892,16 +892,20 @@ function Crates({ crates, fromAccount, shelfAmount, shelfDir, shelfFixed, target
   const [bulkTo, setBulkTo] = useState("");
   if (!crates) return <div className={s.whCratesLoad}>opening…</div>;
   if (!crates.length) return <div className={s.whCratesLoad}>no crates on this shelf</div>;
-  const real = netOut(crates);
-  const plumbing = crates.length - real.length;
-  const list = showPlumbing ? crates : real;
+  // NOTHING IS NETTED OUT. netOut() guessed which crates cancelled each other and
+  // removed them from the drill — including, before the pairing was tightened, two
+  // unrelated real transactions that happened to be equal and opposite. Every
+  // crate on the shelf is shown, and the person decides what offsets what.
+  const real = crates;
+  const plumbing = 0;
+  const list = crates;
   const primarySign = fromAccount.startsWith("Income") ? -1 : 1;
   const [primaryVerb, backVerb] = VERBS(fromAccount);
   const gross = real.filter((c) => Math.sign(Number(c.amount)) === primarySign).reduce((a, c) => a + Math.abs(Number(c.amount)), 0);
   const back = real.filter((c) => Math.sign(Number(c.amount)) === -primarySign).reduce((a, c) => a + Math.abs(Number(c.amount)), 0);
   const net = shelfAmount != null ? shelfAmount : Math.abs(gross - back);
   const opts = targets.filter((t) => t.account !== fromAccount);
-  const LIMIT = showAll ? 999 : 18;
+  const LIMIT = showAll ? 100000 : 60;   // accounting every line by hand means seeing every line
   const target = () => custom.trim() ? shelfToAccount(custom, fromAccount) : pick;
   const doMove = (id) => { onMove(id, fromAccount, target(), rule); setMoving(null); setCustom(""); setPick(""); };
   const doSplit = (id) => { onSplit(id, fromAccount, target(), Number(splitAmt)); setMoving(null); setCustom(""); setPick(""); setSplitAmt(""); };
@@ -935,7 +939,9 @@ function Crates({ crates, fromAccount, shelfAmount, shelfDir, shelfFixed, target
               <input type="checkbox" className={s.crSel} checked={sel.has(c.id)} onChange={() => toggleSel(c.id)} />
               <span className={s.crDate}>{c.date}</span>
               <span className={s.crWho} title={c.narration || c.payee}>{c.narration || c.payee || "—"}</span>
-              <span className={primary ? s.crAmt : s.crBack} title={primary ? primaryVerb : `${backVerb} — reduces this shelf`}>{primary ? "" : "↩ "}{inr(Math.abs(c.amount))}</span>
+              {/* the actual signed figure: a magnitude plus an arrow made you decode
+                  which way the money went, and read the same on both sides */}
+              <span className={primary ? s.crAmt : s.crBack} title={primary ? primaryVerb : `${backVerb} — reduces this shelf`}>{Number(c.amount) < 0 ? "−" : "+"}{inr(Math.abs(c.amount))}</span>
               <button className={s.crMove} disabled={busy} title="move or split" onClick={() => setMoving(moving === c.id ? null : c.id)}>⇄</button>
             </div>
             {moving === c.id && (
