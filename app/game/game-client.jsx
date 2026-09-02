@@ -1104,11 +1104,9 @@ function MissCard({ c, surprises, busy, card }) {
 }
 
 /* an unplanned real transaction ≥₹10k — the case file + one-tap calls */
-const WORK_SHELVES = [
-  { account: "Assets:Receivable:Flyy", name: "Work · Flyy" },
-  { account: "Assets:Receivable:Aikaara", name: "Work · Aikaara" },
-  { account: "Assets:Receivable:Arthsutra", name: "Work · Arthsutra" },
-];
+// Receivables used to be three hard-coded names because `cats` only carried
+// Expenses. They come from the chart now, so a fourth party needs no code change.
+const BALANCE_SHEET = /^(Assets:Receivable|Assets:Transfers|Assets:Investments|Liabilities:Loans):/;
 function SurpriseCard({ c, misses, cats, busy, card, parked }) {
   const [mode, setMode] = useState(null); // null | 'shelf' | 'link'
   const [pick, setPick] = useState(misses[0]?.planLineId || "");
@@ -1120,7 +1118,11 @@ function SurpriseCard({ c, misses, cats, busy, card, parked }) {
   const bucket = isIncome ? "var_in" : "var_out";
   const label = (c.payee || c.narration || "Unplanned").slice(0, 40);
   const from = c.account || (isIncome ? "Income:Other" : "Expenses:Other");
-  const shelfOpts = [...cats.map((a) => ({ account: a, name: leaf(a) })), ...WORK_SHELVES].filter((o) => o.account !== from);
+  // Offer what this movement can actually be. Money IN is income, or it settles
+  // something owed to you, or it is a transfer — not an expense category. Money
+  // OUT is the mirror. Balance-sheet accounts belong on both.
+  const fits = (a) => BALANCE_SHEET.test(a) || (isIncome ? a.startsWith("Income:") : a.startsWith("Expenses:"));
+  const shelfOpts = cats.filter(fits).map((a) => ({ account: a, name: leaf(a) })).filter((o) => o.account !== from);
   const target = () => custom.trim() ? shelfToAccount(custom, from) : to;
   const doShelf = () => {
     const t = target();
