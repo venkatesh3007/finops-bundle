@@ -907,10 +907,10 @@ function Crates({ crates, fromAccount, shelfAmount, shelfDir, shelfFixed, target
   const opts = targets.filter((t) => t.account !== fromAccount);
   const LIMIT = showAll ? 100000 : 60;   // accounting every line by hand means seeing every line
   const target = () => custom.trim() ? shelfToAccount(custom, fromAccount) : pick;
-  const doMove = (id) => { onMove(id, fromAccount, target(), rule); setMoving(null); setCustom(""); setPick(""); };
+  const doMove = (id) => { onMove(id, fromAccount, target(), false); setMoving(null); setCustom(""); setPick(""); };
   const doSplit = (id) => { onSplit(id, fromAccount, target(), Number(splitAmt)); setMoving(null); setCustom(""); setPick(""); setSplitAmt(""); };
   const toggleSel = (id) => setSel((s2) => { const n = new Set(s2); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  const doBulk = () => { onBulk([...sel].map((id) => ({ txnId: id, fromAccount })), bulkTo, rule); setSel(new Set()); setBulkTo(""); };
+  const doBulk = () => { onBulk([...sel].map((id) => ({ txnId: id, fromAccount })), bulkTo, false); setSel(new Set()); setBulkTo(""); };
   return (
     <div className={s.whCrates}>
       {shelfDir && (
@@ -926,7 +926,7 @@ function Crates({ crates, fromAccount, shelfAmount, shelfDir, shelfFixed, target
         <div className={s.bulkBar}>
           <span className={s.bulkN}>{sel.size} selected</span>
           <select className={s.moveSel} value={bulkTo} onChange={(e) => setBulkTo(e.target.value)}><option value="">move all to…</option>{opts.map((t) => <option key={t.account} value={t.account}>{t.name}</option>)}</select>
-          <label className={s.moveRule}><input type="checkbox" checked={rule} onChange={(e) => setRule(e.target.checked)} /> rule</label>
+          
           <button className={s.moveGo} disabled={busy || !bulkTo} onClick={doBulk}>Move {sel.size} →</button>
           <button className={s.pickBack} onClick={() => setSel(new Set())}>clear</button>
         </div>
@@ -951,7 +951,7 @@ function Crates({ crates, fromAccount, shelfAmount, shelfDir, shelfFixed, target
                   {opts.map((t) => <option key={t.account} value={t.account}>{t.name}</option>)}
                 </select>
                 <input className={s.moveNew} placeholder="or new shelf…" value={custom} onChange={(e) => setCustom(e.target.value)} />
-                <label className={s.moveRule}><input type="checkbox" checked={rule} onChange={(e) => setRule(e.target.checked)} /> rule</label>
+                
                 <button className={s.moveGo} disabled={busy || (!pick && !custom.trim())} onClick={() => doMove(c.id)}>Move all</button>
                 <span className={s.splitSep}>or</span>
                 <input className={s.splitAmt} inputMode="numeric" placeholder="₹ split" value={splitAmt} onChange={(e) => setSplitAmt(e.target.value.replace(/[^\d]/g, ""))} />
@@ -1142,7 +1142,7 @@ function SurpriseCard({ c, misses, cats, busy, card, parked }) {
   const doShelf = () => {
     const t = target();
     if (!t || t === from) return;
-    card({ action: "recat", txnId: c.txnId, fromAccount: from, toAccount: t, makeRule: rule });
+    card({ action: "recat", txnId: c.txnId, fromAccount: from, toAccount: t, makeRule: false });
     setMode(null); setTo(""); setCustom("");
   };
   const doSplit = () => {
@@ -1171,8 +1171,10 @@ function SurpriseCard({ c, misses, cats, busy, card, parked }) {
       {!mode ? (
         <div className={s.excActs}>
           <button className={s.actPrimary} disabled={busy} title="move it to the shelf where it belongs" onClick={() => setMode("shelf")}>Put on a shelf →</button>
-          {misses.length > 0 && <button className={s.actGhost} disabled={busy} title="you'd planned for this — tick it off" onClick={() => setMode("link")}>Was expected</button>}
-          <button className={s.actGhost} disabled={busy} title="add this as a planned line for the month" onClick={() => card({ action: "newline", bucket, label, amount: c.amount, txnId: c.txnId })}>Add to plan</button>
+          {/* "Was expected" and "Add to plan" removed with the plan. Add to plan was
+              the dangerous one: it wrote a plan line already marked matched, so a
+              card left the queue without anything being said about where the money
+              belonged. */}
           <button className={s.actGhost} disabled={busy} title="it's fine where it is — leave it" onClick={() => card({ action: "accept", txnId: c.txnId })}>Looks right</button>
           {!parked && <button className={s.actGhost} disabled={busy} title="park it, decide later" onClick={() => card({ action: "review", txnId: c.txnId })}>Later</button>}
         </div>
@@ -1183,7 +1185,7 @@ function SurpriseCard({ c, misses, cats, busy, card, parked }) {
             {shelfOpts.map((o) => <option key={o.account} value={o.account}>{o.name}</option>)}
           </select>
           <input className={s.moveNew} placeholder="or new shelf…" value={custom} onChange={(e) => setCustom(e.target.value)} />
-          <label className={s.moveRule}><input type="checkbox" checked={rule} onChange={(e) => setRule(e.target.checked)} /> rule</label>
+          {/* no rule checkbox — nothing learns from a move for now */}
           <button className={s.moveGo} disabled={busy || (!to && !custom.trim())} onClick={doShelf}>Put all</button>
           <span className={s.splitSep}>or</span>
           <input className={s.splitAmt} inputMode="numeric" placeholder="₹ split" value={splitAmt} onChange={(e) => setSplitAmt(e.target.value.replace(/[^\d]/g, ""))} />
