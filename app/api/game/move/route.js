@@ -1,4 +1,4 @@
-import { resolveReclassify, splitReclassify, addManualEntry, claimReimbursement, markReview } from "../../../../lib/moves";
+import { resolveReclassify, splitReclassify, splitMany, addManualEntry, claimReimbursement, markReview } from "../../../../lib/moves";
 import { resolveEntity } from "../../../../lib/tenant";
 export const maxDuration = 60;
 export async function POST(req) {
@@ -15,6 +15,7 @@ export async function POST(req) {
       result = { moved: result.length };
     }
     else if (action === "split") result = await splitReclassify(entity, b);
+    else if (action === "splitmany") result = await splitMany(entity, b);
     else if (action === "add") result = await addManualEntry(entity, b);
     else if (action === "claim") result = await claimReimbursement(entity, b);
     else if (action === "review") result = await markReview(entity, b);

@@ -1129,6 +1129,9 @@ function SurpriseCard({ c, misses, cats, busy, card, parked }) {
   const [custom, setCustom] = useState("");
   const [rule, setRule] = useState(true);
   const [splitAmt, setSplitAmt] = useState("");
+  // A crate can belong to several shelves at once. Parts are named here and go in
+  // as ONE decision, so there is never a half-split intermediate state.
+  const [parts, setParts] = useState([{ account: "", custom: "", amount: "" }]);
   const isIncome = c.flow === "income";
   const bucket = isIncome ? "var_in" : "var_out";
   const label = (c.payee || c.narration || "Unplanned").slice(0, 40);
@@ -1145,11 +1148,19 @@ function SurpriseCard({ c, misses, cats, busy, card, parked }) {
     card({ action: "recat", txnId: c.txnId, fromAccount: from, toAccount: t, makeRule: false });
     setMode(null); setTo(""); setCustom("");
   };
+  const partAccount = (p) => (p.custom.trim() ? shelfToAccount(p.custom, from) : p.account);
+  const partList = parts.map((p) => ({ account: partAccount(p), amount: Number(p.amount) || 0 }))
+                        .filter((p) => p.account && p.amount > 0);
+  const splitTotal = partList.reduce((t, p) => t + p.amount, 0);
+  const whole = Math.abs(Number(c.amount));
+  const leftover = Math.round((whole - splitTotal) * 100) / 100;
+  const splitOk = partList.length > 0 && splitTotal > 0 && leftover >= -0.005
+    && new Set(partList.map((p) => p.account)).size === partList.length;
+  const setPart = (i, k, v) => setParts((ps) => ps.map((p, j) => (j === i ? { ...p, [k]: v } : p)));
   const doSplit = () => {
-    const t = target();
-    if (!t || t === from || !(Number(splitAmt) > 0)) return;
-    card({ action: "split", txnId: c.txnId, fromAccount: from, toAccount: t, amount: Number(splitAmt) });
-    setMode(null); setTo(""); setCustom(""); setSplitAmt("");
+    if (!splitOk) return;
+    card({ action: "splitmany", txnId: c.txnId, fromAccount: from, parts: partList });
+    setMode(null); setParts([{ account: "", custom: "", amount: "" }]);
   };
 
   return (
@@ -1189,8 +1200,33 @@ function SurpriseCard({ c, misses, cats, busy, card, parked }) {
           {/* no rule checkbox — nothing learns from a move for now */}
           <button className={s.moveGo} disabled={busy || (!to && !custom.trim())} onClick={doShelf}>Put all</button>
           <span className={s.splitSep}>or</span>
-          <input className={s.splitAmt} inputMode="numeric" placeholder="₹ split" value={splitAmt} onChange={(e) => setSplitAmt(e.target.value.replace(/[^\d]/g, ""))} />
-          <button className={s.moveGo2} disabled={busy || !splitAmt || (!to && !custom.trim())} onClick={doSplit}>Split</button>
+          <button className={s.moveGo2} disabled={busy} onClick={() => setMode("split")}>Split…</button>
+          <button className={s.pickBack} onClick={() => setMode(null)}>✕</button>
+        </div>
+      ) : mode === "split" ? (
+        /* A crate can belong to several shelves. Name each part; whatever is not
+           named stays where it is. It goes in as one entry, so there is no
+           half-split state to recover from. */
+        <div className={s.moveRow} style={{ flexWrap: "wrap", gap: 8 }}>
+          {parts.map((p, i) => (
+            <div key={i} style={{ display: "flex", gap: 6, alignItems: "center", width: "100%" }}>
+              <select className={s.moveSel} value={p.account} onChange={(e) => { setPart(i, "account", e.target.value); setPart(i, "custom", ""); }}>
+                <option value="">shelf…</option>
+                {shelfOpts.map((o) => <option key={o.account} value={o.account}>{o.name}</option>)}
+              </select>
+              <input className={s.moveNew} placeholder="or new shelf…" value={p.custom} onChange={(e) => setPart(i, "custom", e.target.value)} />
+              <input className={s.splitAmt} inputMode="numeric" placeholder="₹" value={p.amount}
+                     onChange={(e) => setPart(i, "amount", e.target.value.replace(/[^\d]/g, ""))} />
+              {parts.length > 1 && <button className={s.pickBack} title="remove this part"
+                     onClick={() => setParts((ps) => ps.filter((_, j) => j !== i))}>✕</button>}
+            </div>
+          ))}
+          <button className={s.actGhost} onClick={() => setParts((ps) => [...ps, { account: "", custom: "", amount: "" }])}>+ another shelf</button>
+          <span className={s.splitSep}>
+            {inr(splitTotal)} of {inr(whole)}
+            {leftover > 0 ? ` · ${inr(leftover)} stays on ${leaf(from)}` : leftover < -0.005 ? " · more than the crate" : " · exact"}
+          </span>
+          <button className={s.moveGo} disabled={busy || !splitOk} onClick={doSplit}>Split {partList.length > 1 ? `${partList.length} ways` : ""}</button>
           <button className={s.pickBack} onClick={() => setMode(null)}>✕</button>
         </div>
       ) : mode === "link" ? (
