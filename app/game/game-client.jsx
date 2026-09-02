@@ -782,7 +782,16 @@ function Warehouse({ entity, month }) {
   const inP = w.zones.filter((z) => z.dir === "in").reduce((a, z) => a + z.planned, 0);
   const outP = w.zones.filter((z) => z.dir === "out").reduce((a, z) => a + z.planned, 0);
   // every shelf across the room = the move targets.
-  const targets = [...new Map([...w.zones, ...w.side].flatMap((z) => z.shelves).filter((sh) => sh.account.startsWith("Income") || sh.account.startsWith("Expenses") || sh.account.startsWith("Assets:Receivable") || sh.account.startsWith("Assets:Investments")).map((sh) => [sh.account, sh])).values()];
+  // Move targets come from the CHART, not from this month's shelves. Deriving them
+  // from w.zones meant you could only move a crate somewhere that already had a
+  // crate that month — so a first-time destination, which is exactly what a new
+  // receivable is, could never be chosen. w.accounts is the full eligible chart;
+  // the month's shelves are merged in so their ₹ still shows on the option.
+  const shelfByAcct = new Map([...w.zones, ...w.side].flatMap((z) => z.shelves).map((sh) => [sh.account, sh]));
+  const eligible = (a) => a.startsWith("Income") || a.startsWith("Expenses")
+    || a.startsWith("Assets:Receivable") || a.startsWith("Assets:Investments") || a.startsWith("Assets:Transfers");
+  const targets = [...new Set([...(w.accounts || []), ...shelfByAcct.keys()])].filter(eligible).sort()
+    .map((account) => shelfByAcct.get(account) || { account, name: account.split(":").slice(1).join(" · ") });
 
   const Zone = (z, side) => (
     <div className={`${s.whzone} ${side ? s.whsideZone : (z.dir === "in" ? s.whin : s.whout)}`} key={z.key}>
@@ -1129,7 +1138,7 @@ function SurpriseCard({ c, misses, cats, busy, card, parked }) {
   return (
     <div className={`${s.exc} ${s.excSurprise} ${parked ? s.excParked : ""}`}>
       <div className={s.excLeft}>
-        <span className={`${s.chip} ${isIncome ? s.b_var_in : s.b_var_out}`}>{isIncome ? "unexpected in" : "unplanned"}</span>
+        <span className={`${s.chip} ${isIncome ? s.b_var_in : s.b_var_out}`}>{isIncome ? "unexpected in" : "unexpected out"}</span>
         <div className={s.excMain}>
           <b>{c.payee || c.narration || "(no description)"}</b>
           <span className={s.excMeta}>
