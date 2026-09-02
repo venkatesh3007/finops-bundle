@@ -248,6 +248,59 @@ const TOOLS = [
     },
   },
   {
+    name: "list_decisions",
+    title: "The payee rules in force",
+    description: "Every learned payee → account rule, when it was made and why. Rules made deliberately carry a written rationale; ones the importer learned by itself are marked auto_learned — those are the ones to distrust if a categorisation pass went wrong, because a mis-assigned row teaches a wrong rule that then re-fires on every later classification.",
+    schema: {
+      type: "object",
+      properties: {
+        account: { type: "string", description: "only rules pointing at this account" },
+        auto_learned_only: { type: "boolean", description: "only rules the importer taught itself" },
+      },
+    },
+    async run({ account, auto_learned_only }, { entity }) {
+      const rows = await query(
+        `select replace(d.key,'payee:','') as payee, d.decision as account, d.rationale,
+                to_char(d.decided_at,'YYYY-MM-DD HH24:MI') as decided_at
+           from decisions d join entities e on e.id=d.entity_id
+          where e.slug=$1 and d.key like 'payee:%' ${account ? "and d.decision=$2" : ""}
+          order by d.decided_at, payee`,
+        account ? [entity, account] : [entity]);
+      const AUTO = /picked while importing a statement/i;
+      const out = rows.map((r) => ({ ...r, auto_learned: AUTO.test(r.rationale || "") }))
+                      .filter((r) => (auto_learned_only ? r.auto_learned : true));
+      return { rules: out, count: out.length, auto_learned: out.filter((r) => r.auto_learned).length };
+    },
+  },
+  {
+    name: "forget_payee_rule",
+    title: "Delete payee rules",
+    description: "Remove learned payee → account rules. Deleting is usually better than correcting one you are unsure of: with the rule gone the row is reclassified from history and the frontier, and anything still uncertain surfaces for a decision instead of inheriting a guess. Existing postings are untouched — this only changes how future classification runs.",
+    schema: {
+      type: "object",
+      properties: {
+        payees: { type: "array", items: { type: "string" }, description: "exact payees from list_decisions" },
+        auto_learned_to_account: { type: "string", description: "instead: delete every AUTO-LEARNED rule pointing at this account (e.g. Expenses:EMI). Deliberate rules with a written rationale are kept." },
+      },
+    },
+    async run({ payees, auto_learned_to_account }, { entity }) {
+      if (!payees?.length && !auto_learned_to_account)
+        throw new Error("pass `payees`, or `auto_learned_to_account` to purge what the importer taught itself");
+      const rows = auto_learned_to_account
+        ? await query(
+            `delete from decisions d using entities e
+              where e.id=d.entity_id and e.slug=$1 and d.key like 'payee:%'
+                and d.decision=$2 and d.rationale ilike '%picked while importing a statement%'
+              returning replace(d.key,'payee:','') as payee, d.decision as account`, [entity, auto_learned_to_account])
+        : await query(
+            `delete from decisions d using entities e
+              where e.id=d.entity_id and e.slug=$1 and d.key = any($2::text[])
+              returning replace(d.key,'payee:','') as payee, d.decision as account`,
+            [entity, payees.map((p) => `payee:${p}`)]);
+      return { forgotten: rows, count: rows.length };
+    },
+  },
+  {
     name: "search_rows",
     title: "Find rows across statements",
     description: "Search every statement for rows matching a payee or an amount — the way to answer 'what is this recurring transfer' or 'where else does this appear'.",
