@@ -774,6 +774,7 @@ function Warehouse({ entity, month }) {
   const move = (txnId, fromAccount, toAccount, makeRule) => (toAccount && toAccount !== fromAccount) && post({ action: "reclassify", txnId, fromAccount, toAccount, makeRule });
   // bulk-move many crates to one shelf; split one crate across two shelves.
   const bulkMove = (items, toAccount, makeRule) => toAccount && post({ action: "bulk", items, toAccount, makeRule });
+  const undoCrate = (txnId) => post({ action: "undo", txnId });
   const splitCrate = (txnId, fromAccount, toAccount, amount) => (toAccount && amount > 0) && post({ action: "split", txnId, fromAccount, toAccount, amount });
   // move a whole shelf between the Fixed and Variable aisle.
   const setZone = async (account, fixed) => { setBusy(true); try { const j = await (await fetch("/api/game/zone", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ entity, account, fixed }) })).json(); if (!j.error) await loadW(); } finally { setBusy(false); } };
@@ -814,7 +815,7 @@ function Warehouse({ entity, month }) {
       </div>
       {z.shelves.some((sh) => sh.account === open) && (() => { const os = z.shelves.find((sh) => sh.account === open); return (
         <Crates crates={crates} fromAccount={open} shelfAmount={os?.amount} shelfDir={side ? null : z.dir} shelfFixed={os?.fixed}
-          targets={targets} onMove={move} onBulk={bulkMove} onSplit={splitCrate} onZone={setZone} busy={busy} />
+          targets={targets} onMove={move} onBulk={bulkMove} onSplit={splitCrate} onZone={setZone} onUndo={undoCrate} busy={busy} />
       ); })()}
     </div>
   );
@@ -880,7 +881,7 @@ const VERBS = (acc) => acc.startsWith("Income") ? ["received", "reversed"]
   : acc.startsWith("Assets:Receivable") ? ["fronted", "reimbursed"]
   : acc.startsWith("Assets:Investments") ? ["put in", "took out"]
   : ["spent", "came back"];
-function Crates({ crates, fromAccount, shelfAmount, shelfDir, shelfFixed, targets, onMove, onBulk, onSplit, onZone, busy }) {
+function Crates({ crates, fromAccount, shelfAmount, shelfDir, shelfFixed, targets, onMove, onBulk, onSplit, onZone, onUndo, busy }) {
   const [moving, setMoving] = useState(null);   // txnId with the per-crate action row open
   const [pick, setPick] = useState("");
   const [custom, setCustom] = useState("");
@@ -943,6 +944,11 @@ function Crates({ crates, fromAccount, shelfAmount, shelfDir, shelfFixed, target
                   which way the money went, and read the same on both sides */}
               <span className={primary ? s.crAmt : s.crBack} title={primary ? primaryVerb : `${backVerb} — reduces this shelf`}>{Number(c.amount) < 0 ? "−" : "+"}{inr(Math.abs(c.amount))}</span>
               <button className={s.crMove} disabled={busy} title="move or split" onClick={() => setMoving(moving === c.id ? null : c.id)}>⇄</button>
+              {/* Undo the last decision made about this crate. The books are
+                  append-only, so this posts the mirror of that entry rather than
+                  deleting it, and puts the line item back in the list. */}
+              <button className={s.crMove} disabled={busy} title="undo the last move or split on this one — puts it back in the list"
+                      onClick={() => onUndo(c.id)}>↺</button>
             </div>
             {moving === c.id && (
               <div className={s.moveRow}>
@@ -1286,7 +1292,11 @@ function LockSeal({ payoff, month, onClose }) {
 }
 
 const bucketLabel = (b) => ({ fixed_in: "fixed in", var_in: "variable in", fixed_out: "fixed", var_out: "variable", work: "work" }[b] || b);
-const leaf = (a) => (a || "").split(":").slice(1).join(" · ");
+// The FULL account, type included. Dropping the first segment made
+// Income:Other and Expenses:Other both read "Other" — on the same board, one an
+// inflow shelf and one an outflow shelf — and Income:Salary indistinguishable
+// from a hypothetical Expenses:Salary. The type is the half that disambiguates.
+const leaf = (a) => (a || "").replace(/:/g, " · ");
 const docName = (d) => { const b = d.split("/").pop(); return b.length > 26 ? b.slice(0, 26) + "…" : b; };
 
 /* ===================================================================== */
