@@ -11,7 +11,7 @@
 import { query } from "../../../lib/db";
 import { ensureUserEntity } from "../../../lib/tenant";
 import { verifyAccess, issuer } from "../../../lib/mcp-oauth";
-import { listDrafts, getDraft, updateDraft, importDraft, fixRow } from "../../../lib/statements/drafts";
+import { listDrafts, getDraft, updateDraft, importDraft, fixRow, clearRowOverrides } from "../../../lib/statements/drafts";
 import { classificationContext } from "../../../lib/statements-import";
 import { reconcile } from "../../../lib/statements/reconcile";
 import { listSourceRules, setSourceRule, resolveHome, accountIsOpen, matchableText } from "../../../lib/statements/source-rules";
@@ -200,6 +200,22 @@ const TOOLS = [
     },
     async run({ statement_id, row, action, amount, reason, force }, { entity }) {
       return await fixRow(entity, statement_id, { row, action, amount, reason, force: !!force });
+    },
+  },
+  {
+    name: "clear_row_overrides",
+    title: "Undo manual categorisation",
+    description: "Put manually categorised rows back where the RULES place them — decisions, regex, then payee history — and pick up any set_payee_rule made since. Use it when a batch of assignments went to the wrong rows, or to re-apply rules over earlier hand-picks. Rows the rules cannot place come back with no account, and import_statement will refuse them until they are set. Amounts are never touched.",
+    schema: {
+      type: "object",
+      properties: {
+        statement_id: { type: "string", description: "one statement; omit and pass all_statements to do the whole book" },
+        all_statements: { type: "boolean", description: "clear manual picks on every not-yet-imported statement" },
+      },
+    },
+    async run({ statement_id, all_statements }, { entity }) {
+      if (!statement_id && !all_statements) throw new Error("pass a statement_id, or all_statements:true to do the whole book");
+      return await clearRowOverrides(entity, { id: statement_id || null, all: !!all_statements });
     },
   },
   {
