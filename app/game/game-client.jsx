@@ -1155,11 +1155,12 @@ function SurpriseCard({ c, misses, cats, busy, card, parked }) {
   return (
     <div className={`${s.exc} ${s.excSurprise} ${parked ? s.excParked : ""}`}>
       <div className={s.excLeft}>
-        <span className={`${s.chip} ${isIncome ? s.b_var_in : s.b_var_out}`}>{isIncome ? "unexpected in" : "unexpected out"}</span>
+        {/* a line item is not a verdict. Direction is the sign on the amount. */}
+        <span className={`${s.chip} ${isIncome ? s.b_var_in : s.b_var_out}`}>{isIncome ? "in" : "out"}</span>
         <div className={s.excMain}>
           <b>{c.payee || c.narration || "(no description)"}</b>
           <span className={s.excMeta}>
-            {c.date} · <b className={s.amt}>{inr(c.amount)}</b>
+            {c.date} · <b className={s.amt}>{isIncome ? "+" : "−"}{inr(Math.abs(c.amount))}</b>
             {c.statement ? ` · via ${leaf(c.statement)}` : ""}
             {c.account ? ` · now on ${leaf(c.account)}` : ""}
           </span>
