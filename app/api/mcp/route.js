@@ -360,19 +360,29 @@ const TOOLS = [
              from transactions t join postings p on p.transaction_id=t.id join accounts a on a.id=p.account_id
              left join vettings v on v.transaction_id=t.id join entities e on e.id=t.entity_id
             where ${where.join(" and ")} and a.name not like 'Assets:Bank:%' and a.name not like 'Liabilities:Card:%'
+            and t.corrects_id is null and not (t.metadata ? 'undo_of') and not (t.metadata ? 'split_of')
             order by t.date, t.id limit ${lim}`, args);
         return { rows, count: rows.length };
       }
       const groups = await query(
-        `select t.payee, count(distinct t.id)::int items, round(sum(abs(p.amount))::numeric,0) total,
+        `select t.payee, count(distinct t.id)::int items,
+                -- NET, and gross beside it. Summing abs(amount) over every leg
+                -- counted one ₹169,975 NEFT five times: the real row, both legs of
+                -- a reclassification, and both legs of its undo. Journal entries
+                -- are excluded below, but a payee with genuine refunds still needs
+                -- the two numbers to be different things.
+                round(abs(sum(p.amount))::numeric,0) total,
+                round(sum(abs(p.amount))::numeric,0) gross,
                 array_agg(distinct a.name) sitting_on
            from transactions t join postings p on p.transaction_id=t.id join accounts a on a.id=p.account_id
            left join vettings v on v.transaction_id=t.id join entities e on e.id=t.entity_id
           where ${where.join(" and ")} and a.name not like 'Assets:Bank:%' and a.name not like 'Liabilities:Card:%'
+            and t.corrects_id is null and not (t.metadata ? 'undo_of') and not (t.metadata ? 'split_of')
           group by 1 order by 2 desc limit ${lim}`, args);
       const tot = await query(
         `select count(distinct t.id)::int n from transactions t left join vettings v on v.transaction_id=t.id
-           join entities e on e.id=t.entity_id where ${where.filter((w) => !w.startsWith("a.name")).join(" and ")}`, args);
+           join entities e on e.id=t.entity_id where ${where.filter((w) => !w.startsWith("a.name")).join(" and ")}
+            and t.corrects_id is null and not (t.metadata ? 'undo_of') and not (t.metadata ? 'split_of')`, args);
       return { payees: groups, shown: groups.length, line_items_waiting: tot[0]?.n ?? null };
     },
   },
@@ -403,6 +413,7 @@ const TOOLS = [
            from transactions t join postings p on p.transaction_id=t.id join accounts a on a.id=p.account_id
            left join vettings v on v.transaction_id=t.id join entities e on e.id=t.entity_id
           where ${where.join(" and ")} and a.name not like 'Assets:Bank:%' and a.name not like 'Liabilities:Card:%'
+            and t.corrects_id is null and not (t.metadata ? 'undo_of') and not (t.metadata ? 'split_of')
             and a.name <> $${args.push(account)}`, args);
       if (!rows.length) return { filed: 0, note: "nothing unfiled matches that — it may already be on this shelf" };
       if (dry_run) return { would_file: rows.length, to: account, from: [...new Set(rows.map((r) => r.account))], sample: rows.slice(0, 5) };
