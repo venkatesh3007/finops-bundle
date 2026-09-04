@@ -652,6 +652,7 @@ function MonthBoard({ entity, month, onChanged }) {
   const [expand, setExpand] = useState(false);
   const [payoff, setPayoff] = useState(null);
   const [showDeferred, setShowDeferred] = useState(false);
+  const [err, setErr] = useState("");
 
   const load = useCallback(async () => {
     const j = await (await fetch(`/api/game/month?entity=${entity}&month=${month}`)).json();
@@ -660,12 +661,17 @@ function MonthBoard({ entity, month, onChanged }) {
   useEffect(() => { setBoard(null); setExpand(false); setShowDeferred(false); load(); }, [load]);
 
   const card = useCallback(async (body) => {
-    setBusy(true);
+    setBusy(true); setErr("");
     try {
       const j = await (await fetch("/api/game/card", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ entity, month, ...body }) })).json();
-      if (!j.error) await load();
+      // A refusal has to be SAID. This swallowed j.error and simply did not
+      // reload, so a move that the server rejected looked identical to a button
+      // that did nothing — which is how a broken "new shelf" went unnoticed.
+      if (j.error) setErr(String(j.error));
+      else await load();
       return j;
-    } finally { setBusy(false); }
+    } catch (e) { setErr(String(e.message || e)); return { error: String(e.message || e) }; }
+    finally { setBusy(false); }
   }, [entity, month, load]);
 
   const lock = useCallback(async () => {
@@ -688,6 +694,16 @@ function MonthBoard({ entity, month, onChanged }) {
       <BoardHead board={board} onLock={lock} busy={busy} />
 
       <NextHint board={board} onLock={lock} busy={busy} />
+
+      {err && (
+
+        <div style={{ margin: "8px 0", padding: "10px 12px", borderRadius: 8, background: "#3a1d1d", border: "1px solid #5c2b2b", color: "#ffb4b4", fontSize: 13.5 }}>
+
+          {err} <button onClick={() => setErr("")} style={{ float: "right", background: "none", border: 0, color: "#ffb4b4", cursor: "pointer" }}>✕</button>
+
+        </div>
+
+      )}
 
       {/* the warehouse — shelves stacked into floor-plan zones (your cashflow model) */}
       <Warehouse entity={entity} month={month} />
@@ -748,6 +764,7 @@ function shelfToAccount(input, fromAccount) {
 }
 function Warehouse({ entity, month }) {
   const [w, setW] = useState(null);
+  const [wErr, setWErr] = useState("");
   const [open, setOpen] = useState(null);
   const [crates, setCrates] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -769,7 +786,15 @@ function Warehouse({ entity, month }) {
   const drill = (account) => { if (open === account) { setOpen(null); return; } setOpen(account); loadCrates(account); };
 
   const reload = async () => { await loadW(); if (open) await loadCrates(open); };
-  const post = async (body) => { setBusy(true); try { const j = await (await fetch("/api/game/move", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ entity, ...body }) })).json(); if (!j.error) await reload(); return j; } finally { setBusy(false); } };
+  const post = async (body) => {
+    setBusy(true); setWErr("");
+    try {
+      const j = await (await fetch("/api/game/move", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ entity, ...body }) })).json();
+      if (j.error) setWErr(String(j.error)); else await reload();
+      return j;
+    } catch (e) { setWErr(String(e.message || e)); return { error: String(e.message || e) }; }
+    finally { setBusy(false); }
+  };
   // move a crate to another shelf — a reclassification (append-only correction).
   const move = (txnId, fromAccount, toAccount, makeRule) => (toAccount && toAccount !== fromAccount) && post({ action: "reclassify", txnId, fromAccount, toAccount, makeRule });
   // bulk-move many crates to one shelf; split one crate across two shelves.
@@ -780,6 +805,11 @@ function Warehouse({ entity, month }) {
   const setZone = async (account, fixed) => { setBusy(true); try { const j = await (await fetch("/api/game/zone", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ entity, account, fixed }) })).json(); if (!j.error) await loadW(); } finally { setBusy(false); } };
 
   if (!w) return <div className={s.whLoading} data-tour="quads">Opening the warehouse…</div>;
+  const ErrLine = wErr ? (
+    <div style={{ margin: "8px 0", padding: "10px 12px", borderRadius: 8, background: "#3a1d1d", border: "1px solid #5c2b2b", color: "#ffb4b4", fontSize: 13.5 }}>
+      {wErr} <button onClick={() => setWErr("")} style={{ float: "right", background: "none", border: 0, color: "#ffb4b4", cursor: "pointer" }}>✕</button>
+    </div>
+  ) : null;
   if (w.error) return <div className={s.whLoading} data-tour="quads">⚠ {w.error}</div>;
 
   const inA = w.zones.filter((z) => z.dir === "in").reduce((a, z) => a + z.actual, 0);
@@ -822,6 +852,7 @@ function Warehouse({ entity, month }) {
 
   return (
     <div className={s.wh} data-tour="quads">
+      {ErrLine}
       <div className={s.whaisle}>◤ Inbound · money in</div>
       <div className={s.whrow}>{w.zones.filter((z) => z.dir === "in").map((z) => Zone(z))}</div>
       <div className={s.whaisle}>◣ Outbound · money out</div>
