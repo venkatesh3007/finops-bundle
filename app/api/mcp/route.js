@@ -15,7 +15,7 @@ import { listDrafts, getDraft, updateDraft, importDraft, fixRow, clearRowOverrid
 import { classificationContext } from "../../../lib/statements-import";
 import { reconcile } from "../../../lib/statements/reconcile";
 import { listSourceRules, setSourceRule, resolveHome, accountIsOpen, matchableText } from "../../../lib/statements/source-rules";
-import { resolveReclassify, splitMany, undoLastFiling } from "../../../lib/moves";
+import { resolveReclassify, splitMany, undoLastFiling, addJournalEntry } from "../../../lib/moves";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -450,6 +450,28 @@ const TOOLS = [
     description: "Put a line item back the way it was and return it to the unfiled list. Walks back one step, so calling it twice undoes two.",
     schema: { type: "object", properties: { id: { type: "string", description: "transaction id" } }, required: ["id"] },
     async run({ id }, { entity }) { return await undoLastFiling(entity, { txnId: id }); },
+  },
+  {
+    name: "post_entry",
+    title: "Post a manual journal entry",
+    description: "Record something true that no statement contains — an opening balance, an accrual, a correction of fact. Every other row in this book comes from an imported PDF, so anything that was already true before the first statement has no other way in: a receivable that existed on day one, for instance, otherwise sends its repayments to an account that started at zero. Legs must balance to zero and every account must already be open. Positive is money INTO an account, negative OUT of it.",
+    schema: {
+      type: "object",
+      properties: {
+        date: { type: "string", description: "YYYY-MM-DD — for an opening balance, the day before the first statement" },
+        payee: { type: "string", description: "who or what it concerns" },
+        narration: { type: "string", description: "why this entry exists — the only record of your reasoning" },
+        legs: {
+          type: "array", description: 'e.g. [{"account":"Assets:Receivable:Mandar","amount":33995},{"account":"Equity:Opening","amount":-33995}]',
+          items: { type: "object", properties: { account: { type: "string" }, amount: { type: "number" } }, required: ["account", "amount"] },
+        },
+        tags: { type: "array", items: { type: "string" }, description: "optional labels" },
+      },
+      required: ["date", "legs"],
+    },
+    async run({ date, payee, narration, legs, tags }, { entity }) {
+      return await addJournalEntry(entity, { date, payee, narration, legs, tags });
+    },
   },
   {
     name: "tag_rows",
