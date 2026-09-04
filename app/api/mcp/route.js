@@ -15,6 +15,7 @@ import { listDrafts, getDraft, updateDraft, importDraft, fixRow, clearRowOverrid
 import { classificationContext } from "../../../lib/statements-import";
 import { reconcile } from "../../../lib/statements/reconcile";
 import { listSourceRules, setSourceRule, resolveHome, accountIsOpen, matchableText } from "../../../lib/statements/source-rules";
+import { resolveReclassify, splitMany, undoLastFiling } from "../../../lib/moves";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -330,6 +331,173 @@ const TOOLS = [
         })),
         total: r2(rows.reduce((t, x) => t + Number(x.row.amount || 0), 0)),
       };
+    },
+  },
+  {
+    name: "list_unfiled",
+    title: "Line items still to be filed",
+    description: "Everything posted but not yet put on a shelf. Grouped by payee it is the efficient view — one decision covers every row of that payee — and `detail` lists the rows themselves when a payee needs looking at one by one. A payee already spread across several accounts is shown as such, because those rarely take a single answer.",
+    schema: {
+      type: "object",
+      properties: {
+        month: { type: "string", description: "YYYY-MM; omit for the whole book" },
+        payee: { type: "string", description: "just this payee, listed row by row" },
+        detail: { type: "boolean", description: "list rows instead of grouping by payee" },
+        limit: { type: "number", description: "default 40" },
+      },
+    },
+    async run({ month, payee, detail, limit = 40 }, { entity }) {
+      const lim = Math.min(Number(limit) || 40, 200);
+      const where = [`e.slug=$1`, `coalesce(v.status,'unvetted') <> 'ok'`];
+      const args = [entity];
+      if (month) { args.push(month); where.push(`to_char(t.date,'YYYY-MM')=$${args.length}`); }
+      if (payee) { args.push(payee); where.push(`t.payee=$${args.length}`); }
+
+      if (payee || detail) {
+        const rows = await query(
+          `select t.id, to_char(t.date,'YYYY-MM-DD') date, t.payee, left(t.narration,90) narration,
+                  a.name account, p.amount, t.tags
+             from transactions t join postings p on p.transaction_id=t.id join accounts a on a.id=p.account_id
+             left join vettings v on v.transaction_id=t.id join entities e on e.id=t.entity_id
+            where ${where.join(" and ")} and a.name not like 'Assets:Bank:%' and a.name not like 'Liabilities:Card:%'
+            order by t.date, t.id limit ${lim}`, args);
+        return { rows, count: rows.length };
+      }
+      const groups = await query(
+        `select t.payee, count(distinct t.id)::int items, round(sum(abs(p.amount))::numeric,0) total,
+                array_agg(distinct a.name) sitting_on
+           from transactions t join postings p on p.transaction_id=t.id join accounts a on a.id=p.account_id
+           left join vettings v on v.transaction_id=t.id join entities e on e.id=t.entity_id
+          where ${where.join(" and ")} and a.name not like 'Assets:Bank:%' and a.name not like 'Liabilities:Card:%'
+          group by 1 order by 2 desc limit ${lim}`, args);
+      const tot = await query(
+        `select count(distinct t.id)::int n from transactions t left join vettings v on v.transaction_id=t.id
+           join entities e on e.id=t.entity_id where ${where.filter((w) => !w.startsWith("a.name")).join(" and ")}`, args);
+      return { payees: groups, shown: groups.length, line_items_waiting: tot[0]?.n ?? null };
+    },
+  },
+  {
+    name: "file_rows",
+    title: "Put rows on a shelf",
+    description: "File line items to an account — every row of a payee at once, or a specific set by id. This is the batch that makes categorising practical: one call for all 158 rows of a payee instead of 158. The account must already be open (open_account first). Nothing is guessed: rows go exactly where you say.",
+    schema: {
+      type: "object",
+      properties: {
+        account: { type: "string", description: "where they belong — an account from list_accounts" },
+        payee: { type: "string", description: "file every unfiled row of this payee" },
+        ids: { type: "array", items: { type: "string" }, description: "instead: specific transaction ids from list_unfiled" },
+        month: { type: "string", description: "with `payee`, limit to one month (YYYY-MM)" },
+        dry_run: { type: "boolean", description: "report what would move without moving it" },
+      },
+      required: ["account"],
+    },
+    async run({ account, payee, ids, month, dry_run }, { entity }) {
+      if (!payee && !(ids || []).length) throw new Error("give a `payee` or a list of `ids`");
+      if (!(await accountIsOpen(entity, account))) throw new Error(`${account} is not open — use open_account first.`);
+      const args = [entity], where = [`e.slug=$1`, `coalesce(v.status,'unvetted') <> 'ok'`];
+      if (payee) { args.push(payee); where.push(`t.payee=$${args.length}`); }
+      if (ids?.length) { args.push(ids); where.push(`t.id = any($${args.length}::uuid[])`); }
+      if (month) { args.push(month); where.push(`to_char(t.date,'YYYY-MM')=$${args.length}`); }
+      const rows = await query(
+        `select distinct t.id, a.name account, p.amount
+           from transactions t join postings p on p.transaction_id=t.id join accounts a on a.id=p.account_id
+           left join vettings v on v.transaction_id=t.id join entities e on e.id=t.entity_id
+          where ${where.join(" and ")} and a.name not like 'Assets:Bank:%' and a.name not like 'Liabilities:Card:%'
+            and a.name <> $${args.push(account)}`, args);
+      if (!rows.length) return { filed: 0, note: "nothing unfiled matches that — it may already be on this shelf" };
+      if (dry_run) return { would_file: rows.length, to: account, from: [...new Set(rows.map((r) => r.account))], sample: rows.slice(0, 5) };
+
+      const done = [], failed = [];
+      for (const r of rows) {
+        try { await resolveReclassify(entity, { txnId: r.id, fromAccount: r.account, toAccount: account, makeRule: false }); done.push(r.id); }
+        catch (e) { failed.push({ id: r.id, error: String(e.message || e).slice(0, 120) }); }
+      }
+      return { filed: done.length, to: account, failed: failed.length ? failed.slice(0, 10) : undefined };
+    },
+  },
+  {
+    name: "split_row",
+    title: "Split one row across shelves",
+    description: "Send parts of a single line item to different accounts in one decision. Whatever is not named stays where it is; if the parts add up exactly the row is filed. Refuses parts totalling more than the row.",
+    schema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "transaction id from list_unfiled" },
+        from: { type: "string", description: "the account it is on now" },
+        parts: { type: "array", description: "[{account, amount}, …]",
+                 items: { type: "object", properties: { account: { type: "string" }, amount: { type: "number" } }, required: ["account", "amount"] } },
+      },
+      required: ["id", "from", "parts"],
+    },
+    async run({ id, from, parts }, { entity }) {
+      return await splitMany(entity, { txnId: id, fromAccount: from, parts });
+    },
+  },
+  {
+    name: "unfile",
+    title: "Undo a filing",
+    description: "Put a line item back the way it was and return it to the unfiled list. Walks back one step, so calling it twice undoes two.",
+    schema: { type: "object", properties: { id: { type: "string", description: "transaction id" } }, required: ["id"] },
+    async run({ id }, { entity }) { return await undoLastFiling(entity, { txnId: id }); },
+  },
+  {
+    name: "tag_rows",
+    title: "Tag line items",
+    description: "Label rows with a tag — a trip, a project, a person — without changing where they are filed. This is the right tool for an occasion: tag a Goa trip #goa-sep-2026 and the flights stay on Expenses:Travel:Flights where they accumulate across every trip, instead of growing a new account subtree per trip. Tags are additive; the same row can carry several.",
+    schema: {
+      type: "object",
+      properties: {
+        tag: { type: "string", description: "e.g. goa-sep-2026 (a leading # is optional)" },
+        ids: { type: "array", items: { type: "string" }, description: "transaction ids" },
+        payee: { type: "string", description: "instead: every row of this payee" },
+        month: { type: "string", description: "narrow to one month (YYYY-MM)" },
+        remove: { type: "boolean", description: "take the tag off instead of putting it on" },
+      },
+      required: ["tag"],
+    },
+    async run({ tag, ids, payee, month, remove }, { entity }) {
+      const t = String(tag).replace(/^#/, "").trim();
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(t)) throw new Error(`"${tag}" is not a usable tag — letters, digits, dot, dash and underscore`);
+      if (!payee && !(ids || []).length) throw new Error("give a `payee` or a list of `ids`");
+      const args = [entity], where = [`e.slug=$1`];
+      if (payee) { args.push(payee); where.push(`t.payee=$${args.length}`); }
+      if (ids?.length) { args.push(ids); where.push(`t.id = any($${args.length}::uuid[])`); }
+      if (month) { args.push(month); where.push(`to_char(t.date,'YYYY-MM')=$${args.length}`); }
+      args.push(t);
+      const sql = remove
+        ? `update transactions t set tags = array_remove(coalesce(t.tags,'{}'), $${args.length})
+             from entities e where e.id=t.entity_id and ${where.join(" and ")} returning t.id`
+        : `update transactions t set tags = (select array_agg(distinct x) from unnest(coalesce(t.tags,'{}') || $${args.length}::text) x)
+             from entities e where e.id=t.entity_id and ${where.join(" and ")} and not (coalesce(t.tags,'{}') @> array[$${args.length}]) returning t.id`;
+      const r = await query(sql, args);
+      return { tag: t, [remove ? "untagged" : "tagged"]: r.length };
+    },
+  },
+  {
+    name: "list_tags",
+    title: "Tags and what they cost",
+    description: "Every tag in the book with how many rows carry it and what they add up to — so a trip or a project has a total without needing its own account subtree. Pass a tag to list its rows.",
+    schema: { type: "object", properties: { tag: { type: "string", description: "list the rows carrying this tag" } } },
+    async run({ tag }, { entity }) {
+      if (tag) {
+        const t = String(tag).replace(/^#/, "").trim();
+        const rows = await query(
+          `select to_char(t.date,'YYYY-MM-DD') date, t.payee, a.name account, p.amount
+             from transactions t join postings p on p.transaction_id=t.id join accounts a on a.id=p.account_id
+             join entities e on e.id=t.entity_id
+            where e.slug=$1 and coalesce(t.tags,'{}') @> array[$2]
+              and a.name not like 'Assets:Bank:%' and a.name not like 'Liabilities:Card:%'
+            order by t.date limit 200`, [entity, t]);
+        return { tag: t, rows, count: rows.length, total: Math.round(rows.reduce((s, r) => s + Math.abs(Number(r.amount)), 0) * 100) / 100 };
+      }
+      const tags = await query(
+        `select x tag, count(distinct t.id)::int items, round(sum(abs(p.amount))::numeric,0) total
+           from transactions t join lateral unnest(coalesce(t.tags,'{}')) x on true
+           join postings p on p.transaction_id=t.id join accounts a on a.id=p.account_id
+           join entities e on e.id=t.entity_id
+          where e.slug=$1 and a.name not like 'Assets:Bank:%' and a.name not like 'Liabilities:Card:%'
+          group by 1 order by 3 desc`, [entity]);
+      return { tags, count: tags.length };
     },
   },
   {
