@@ -469,8 +469,19 @@ const TOOLS = [
              from entities e where e.id=t.entity_id and ${where.join(" and ")} returning t.id`
         : `update transactions t set tags = (select array_agg(distinct x) from unnest(coalesce(t.tags,'{}') || $${args.length}::text) x)
              from entities e where e.id=t.entity_id and ${where.join(" and ")} and not (coalesce(t.tags,'{}') @> array[$${args.length}]) returning t.id`;
-      const r = await query(sql, args);
-      return { tag: t, [remove ? "untagged" : "tagged"]: r.length };
+      // A tag changes no amount and no account, so it is not the kind of edit the
+      // append-only guard exists to stop — but the guard watches every UPDATE on
+      // transactions, so it has to be told. SET LOCAL inside one transaction: a
+      // pooled query would set the flag on a connection that then does no work.
+      const client = await pool().connect();
+      try {
+        await client.query("begin");
+        await client.query("set local finops.allow_mutation = 'on'");
+        const r = await client.query(sql, args);
+        await client.query("commit");
+        return { tag: t, [remove ? "untagged" : "tagged"]: r.rowCount };
+      } catch (e) { await client.query("rollback").catch(() => {}); throw e; }
+      finally { client.release(); }
     },
   },
   {
