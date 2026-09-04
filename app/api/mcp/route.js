@@ -465,8 +465,12 @@ const TOOLS = [
       if (month) { args.push(month); where.push(`to_char(t.date,'YYYY-MM')=$${args.length}`); }
       args.push(t);
       const sql = remove
+        // Only touch rows that actually carry it — otherwise every row matching
+        // the filter is rewritten for nothing and the count reports rows matched
+        // rather than rows changed.
         ? `update transactions t set tags = array_remove(coalesce(t.tags,'{}'), $${args.length})
-             from entities e where e.id=t.entity_id and ${where.join(" and ")} returning t.id`
+             from entities e where e.id=t.entity_id and ${where.join(" and ")}
+               and coalesce(t.tags,'{}') @> array[$${args.length}] returning t.id`
         : `update transactions t set tags = (select array_agg(distinct x) from unnest(coalesce(t.tags,'{}') || $${args.length}::text) x)
              from entities e where e.id=t.entity_id and ${where.join(" and ")} and not (coalesce(t.tags,'{}') @> array[$${args.length}]) returning t.id`;
       // A tag changes no amount and no account, so it is not the kind of edit the
